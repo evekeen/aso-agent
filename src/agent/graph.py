@@ -52,14 +52,25 @@ def generate_initial_keywords_node(state: dict) -> dict:
     failed_ideas = []
     
     for idea in ideas:
-        prompt = f"""You are a professional ASO specialist to optimize apps on the Apple AppStore. 
-        Generate exactly 5 long-tail keywords for the idea: {idea}
-        
-        Focus on keywords that:
-        - Are specific and long-tail (2-3 words)
-        - Target the app's main functionality
-        - Include relevant user intent
-        - Are competitive for App Store search
+        prompt = f"""
+            You are an App Store SEO specialist helping developers and marketers optimize app visibility.
+
+            Generate exactly 5 long-tail keywords for the following mobile app idea: {idea}
+
+            - Use long-tail keyword phrases (2–4 words) that are specific and highly relevant.
+            - Ensure each keyword reflects the app’s main functionality or user benefit (e.g., stress relief, time-saving, motivation).
+            - Include user intent—what a user might search for when looking for this type of app.
+            - Prioritize keywords that are competitive for Apple App Store (i.e., low difficulty, solid search volume).
+            - Format the output as a numbered list.
+
+            Example:
+            App Idea: A meditation app for busy professionals  
+            Output:
+            1. guided meditation for stress  
+            2. quick mindfulness sessions  
+            3. meditation app for work stress  
+            4. short daily breathing exercises  
+            5. stress relief for professionals
         """
         
         try:
