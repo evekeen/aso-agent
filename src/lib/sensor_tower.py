@@ -44,11 +44,7 @@ class SensorTowerAPIClient:
     """Async Sensor Tower API client."""
     
     def __init__(self):
-        self.api_key = os.getenv("SENSOR_TOWER_API_KEY")
-        if not self.api_key:
-            raise ValueError("SENSOR_TOWER_API_KEY environment variable is required")
-        
-        self.base_url = "https://api.sensortower.com/v1"
+        self.base_url = "https://app.sensortower.com/api/ios/apps"
         self.session: Optional[aiohttp.ClientSession] = None
     
     async def __aenter__(self):
@@ -75,7 +71,7 @@ class SensorTowerAPIClient:
         results = {}
         
         # Process apps in batches to avoid rate limiting
-        batch_size = 5
+        batch_size = 20
         for i in range(0, len(app_ids), batch_size):
             batch = app_ids[i:i + batch_size]
             batch_results = await self._fetch_batch(batch)
@@ -87,57 +83,71 @@ class SensorTowerAPIClient:
         
         return results
     
-    async def _fetch_batch(self, app_ids: List[str]) -> Dict[str, Union[AppRevenueResult, Exception]]:
-        """Fetch a batch of app revenue data."""
-        tasks = []
-        for app_id in app_ids:
-            task = self._fetch_single_app(app_id)
-            tasks.append(task)
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        return {
-            app_id: result for app_id, result in zip(app_ids, results)
-        }
     
-    async def _fetch_single_app(self, app_id: str) -> AppRevenueResult:
-        """Fetch revenue data for a single app."""
-        url = f"{self.base_url}/ios/app/{app_id}/details"
+    async def _fetch_batch(self, app_ids: List[str]) -> Dict[str, Union[AppRevenueResult, Exception]]:
+        """Fetch revenue data for a batch of apps."""
+        app_ids_param = ",".join(app_ids)
+        url = f"{self.base_url}?app_ids={app_ids_param}"
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
         }
+        
+        results = {}
         
         try:
             async with self.session.get(url, headers=headers) as response:
-                if response.status == 404:
-                    raise ValueError(f"App {app_id} not found")
-                elif response.status == 401:
-                    raise ValueError("Invalid Sensor Tower API key")
-                elif response.status == 429:
-                    raise ValueError("Rate limit exceeded")
-                elif response.status != 200:
-                    raise ValueError(f"API request failed with status {response.status}")
+                if response.status == 429:
+                    error = ValueError("Rate limited by Sensor Tower API. Please try again later.")
+                    for app_id in app_ids:
+                        results[app_id] = error
+                    return results
+                
+                if response.status != 200:
+                    error = ValueError(f"API request failed with status {response.status}")
+                    for app_id in app_ids:
+                        results[app_id] = error
+                    return results
                 
                 data = await response.json()
                 
-                # Parse the response into our data model
-                return self._parse_app_data(app_id, data)
+                # Parse the response
+                apps = data.get("apps", [])
+                
+                # Map results by app_id
+                for app in apps:
+                    app_id_str = str(app.get("app_id", ""))
+                    try:
+                        result = self._parse_app_data(app)
+                        results[app_id_str] = result
+                    except Exception as e:
+                        results[app_id_str] = e
+                
+                # Check for missing apps
+                for app_id in app_ids:
+                    if app_id not in results:
+                        results[app_id] = ValueError(f"App ID {app_id} not found in Sensor Tower response")
+                
+                return results
                 
         except aiohttp.ClientError as e:
-            raise ValueError(f"Network error fetching app {app_id}: {e}")
+            error = ValueError(f"Failed to fetch data from Sensor Tower: {e}")
+            for app_id in app_ids:
+                results[app_id] = error
+            return results
     
-    def _parse_app_data(self, app_id: str, data: dict) -> AppRevenueResult:
+    def _parse_app_data(self, data: dict) -> AppRevenueResult:
         """Parse Sensor Tower API response into AppRevenueResult."""
         try:
+            app_id = str(data.get("app_id", ""))
+            
             # Extract revenue data
             revenue_data = data.get("humanized_worldwide_last_month_revenue", {})
-            revenue_usd = revenue_data.get("value", 0.0)
+            revenue_usd = revenue_data.get("revenue", 0.0)
             revenue_string = revenue_data.get("string", "$0")
             
             # Extract downloads data
             downloads_data = data.get("humanized_worldwide_last_month_downloads", {})
-            downloads = downloads_data.get("value", 0)
+            downloads = downloads_data.get("downloads", 0)
             downloads_string = downloads_data.get("string", "0")
             
             return AppRevenueResult(
@@ -156,7 +166,7 @@ class SensorTowerAPIClient:
             )
             
         except (KeyError, ValueError, TypeError) as e:
-            raise ValueError(f"Failed to parse app data for {app_id}: {e}")
+            raise ValueError(f"Failed to parse app data: {e}")
 
 
 class SimpleCache:
