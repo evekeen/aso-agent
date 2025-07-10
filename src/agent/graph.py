@@ -6,6 +6,7 @@ from langgraph.graph import MessagesState, StateGraph
 from lib.keywords import generate_keywords
 from lib.sensor_tower import get_apps_revenue
 from lib.appstore import search_app_store
+from lib.keyword_difficulty import analyze_keyword_difficulty_from_appstore_apps
 
 
 class Configuration(TypedDict):
@@ -18,6 +19,7 @@ class State(MessagesState):
     initial_keywords: dict[str, list[str]]
     keywords: dict[str, list[str]]
     apps_by_keyword: dict[str, list[str]]
+    apps_data_by_keyword: dict[str, list]
     revenue_by_app: dict[str, float]
     revenue_by_keyword: dict[str, float]
     traffic_by_keyword: dict[str, float]
@@ -69,6 +71,7 @@ async def search_apps_for_keywords(state: dict) -> dict:
     print(f"Searching App Store for {len(unique_keywords)} unique keywords...")
     
     apps_by_keyword = {}
+    apps_data_by_keyword = {}
     failed_keywords = []
     
     # Search for apps using each keyword
@@ -77,21 +80,24 @@ async def search_apps_for_keywords(state: dict) -> dict:
             print(f"Searching for apps with keyword: '{keyword}'")
             
             # Search App Store for this keyword
-            apps = await search_app_store(keyword, country="us", num=10)
+            apps = await search_app_store(keyword, country="us", num=20)
             
             if not apps:
                 print(f"No apps found for keyword: '{keyword}'")
                 apps_by_keyword[keyword] = []
+                apps_data_by_keyword[keyword] = []
             else:
                 # Extract app IDs from AppstoreApp objects
                 app_ids = [app.app_id for app in apps]
                 apps_by_keyword[keyword] = app_ids
+                apps_data_by_keyword[keyword] = apps
                 print(f"Found {len(app_ids)} apps for '{keyword}': {app_ids[:3]}{'...' if len(app_ids) > 3 else ''}")
                 
         except Exception as e:
             failed_keywords.append(keyword)
             print(f"Failed to search for keyword '{keyword}': {e}")
             apps_by_keyword[keyword] = []
+            apps_data_by_keyword[keyword] = []
     
     # Calculate statistics
     total_apps = sum(len(app_ids) for app_ids in apps_by_keyword.values())
@@ -113,7 +119,7 @@ async def search_apps_for_keywords(state: dict) -> dict:
     if len(failed_keywords) == len(unique_keywords):
         raise RuntimeError("Failed to search for all keywords. Check your network connection and try again.")
     
-    return {"apps_by_keyword": apps_by_keyword}
+    return {"apps_by_keyword": apps_by_keyword, "apps_data_by_keyword": apps_data_by_keyword}
 
 
 async def get_keyword_total_market_size(state: dict) -> dict:
@@ -190,15 +196,78 @@ async def get_keyword_total_market_size(state: dict) -> dict:
         raise RuntimeError(f"Market size analysis failed: {e}")
 
 
+async def analyze_keyword_difficulty(state: dict) -> dict:
+    """
+    LangGraph node to analyze keyword difficulty using the iTunes algorithm.
+    
+    This node:
+    1. Gets app data for each keyword from apps_data_by_keyword
+    2. Runs keyword difficulty analysis for each keyword
+    3. Returns difficulty scores by keyword
+    """
+    apps_data_by_keyword = state.get("apps_data_by_keyword", {})
+    if not apps_data_by_keyword:
+        raise ValueError("No apps data found. Please run app search first.")
+    
+    print(f"Analyzing keyword difficulty for {len(apps_data_by_keyword)} keywords...")
+    
+    difficulty_by_keyword = {}
+    failed_keywords = []
+    
+    for keyword, apps in apps_data_by_keyword.items():
+        try:
+            if not apps:
+                print(f"No apps available for keyword '{keyword}', skipping difficulty analysis")
+                difficulty_by_keyword[keyword] = 1.0
+                continue
+            
+            print(f"Analyzing difficulty for keyword: '{keyword}' ({len(apps)} apps)")
+            
+            # Run difficulty analysis
+            result = analyze_keyword_difficulty_from_appstore_apps(keyword, apps)
+            difficulty_by_keyword[keyword] = result.score
+            
+            # Log detailed results
+            difficulty_level = "Easy" if result.score <= 3 else "Medium" if result.score <= 6 else "Hard" if result.score <= 8 else "Very Hard"
+            print(f"  '{keyword}': {result.score}/10 ({difficulty_level})")
+            print(f"    Title matches: {result.title_matches.score:.1f}, Competitors: {result.competitors}")
+            print(f"    Installs: {result.installs_score:.1f}, Rating: {result.rating_score:.1f}, Age: {result.age_score:.1f}")
+            
+        except Exception as e:
+            failed_keywords.append(keyword)
+            print(f"Failed to analyze difficulty for keyword '{keyword}': {e}")
+            difficulty_by_keyword[keyword] = 5.0
+    
+    # Calculate statistics
+    if difficulty_by_keyword:
+        avg_difficulty = sum(difficulty_by_keyword.values()) / len(difficulty_by_keyword)
+        easy_keywords = len([k for k, v in difficulty_by_keyword.items() if v <= 3])
+        medium_keywords = len([k for k, v in difficulty_by_keyword.items() if 3 < v <= 6])
+        hard_keywords = len([k for k, v in difficulty_by_keyword.items() if v > 6])
+        
+        print(f"\n🎯 Keyword Difficulty Summary:")
+        print(f"  • Average difficulty: {avg_difficulty:.2f}/10")
+        print(f"  • Easy keywords (≤3): {easy_keywords}")
+        print(f"  • Medium keywords (3-6): {medium_keywords}")
+        print(f"  • Hard keywords (>6): {hard_keywords}")
+        
+        if failed_keywords:
+            print(f"  • Failed analyses: {len(failed_keywords)}")
+    
+    return {"difficulty_by_keyword": difficulty_by_keyword}
+
+
 graph = (
     StateGraph(State, config_schema=Configuration)
     .add_node("collect_app_ideas", collect_app_ideas)
     .add_node("generate_initial_keywords", generate_initial_keywords)
     .add_node("search_apps_for_keywords", search_apps_for_keywords)
     .add_node("get_keyword_total_market_size", get_keyword_total_market_size)
+    .add_node("analyze_keyword_difficulty", analyze_keyword_difficulty)
     .add_edge("__start__", "collect_app_ideas")
     .add_edge("collect_app_ideas", "generate_initial_keywords")
     .add_edge("generate_initial_keywords", "search_apps_for_keywords")
     .add_edge("search_apps_for_keywords", "get_keyword_total_market_size")
+    .add_edge("get_keyword_total_market_size", "analyze_keyword_difficulty")
     .compile(name="ASO Researcher")
 )
