@@ -1,54 +1,39 @@
-"""LangGraph single-node graph template.
-
-Returns a predefined response. Replace logic and configuration as needed.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, TypedDict
+from typing import TypedDict
 
-from langchain_core.runnables import RunnableConfig
-from langgraph.graph import StateGraph
+from langgraph.graph import MessagesState, StateGraph
 
 
 class Configuration(TypedDict):
-    """Configurable parameters for the agent.
-
-    Set these when creating assistants OR when invoking the graph.
-    See: https://langchain-ai.github.io/langgraph/cloud/how-tos/configuration_cloud/
-    """
-
-    my_configurable_param: str
+    pass
 
 
 @dataclass
-class State:
-    """Input state for the agent.
-
-    Defines the initial structure of incoming data.
-    See: https://langchain-ai.github.io/langgraph/concepts/low_level/#state
-    """
-
-    changeme: str = "example"
-
-
-async def call_model(state: State, config: RunnableConfig) -> Dict[str, Any]:
-    """Process input and returns output.
-
-    Can use runtime configuration to alter behavior.
-    """
-    configuration = config["configurable"]
-    return {
-        "changeme": "output from call_model. "
-        f'Configured with {configuration.get("my_configurable_param")}'
-    }
+class State(MessagesState):
+    ideas: list[str]
+    initial_keywords: dict[str, list[str]]
+    keywords: dict[str, list[str]]
+    apps_by_keyword: dict[str, list[str]]
+    revenue_by_app: dict[str, float]
+    revenue_by_keyword: dict[str, float]
+    traffic_by_keyword: dict[str, float]
+    difficulty_by_keyword: dict[str, float]
 
 
-# Define the graph
+def generate_initial_keywords(state: State) -> State:
+    ideas = state.ideas
+    initial_keywords = [generate_initial_keywords(idea) for idea in ideas]
+    return State(
+        ideas=ideas,
+        initial_keywords=initial_keywords
+    )
+
+
 graph = (
     StateGraph(State, config_schema=Configuration)
-    .add_node(call_model)
-    .add_edge("__start__", "call_model")
+    .add_node(generate_initial_keywords)
+    .add_edge("__start__", "generate_initial_keywords")
     .compile(name="New Graph")
 )
