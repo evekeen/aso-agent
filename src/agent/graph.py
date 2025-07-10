@@ -42,6 +42,80 @@ def generate_initial_keywords(state: dict) -> dict:
     return {"initial_keywords": initial_keywords}
 
 
+async def search_apps_for_keywords(state: dict) -> dict:
+    """
+    LangGraph node to search App Store for apps using generated keywords.
+    
+    This node:
+    1. Takes keywords from initial_keywords
+    2. Searches App Store for each keyword
+    3. Returns apps_by_keyword mapping
+    """
+    initial_keywords = state.get("initial_keywords", {})
+    if not initial_keywords:
+        raise ValueError("No initial keywords found. Please run keyword generation first.")
+    
+    # Flatten all keywords from all ideas
+    all_keywords = []
+    for idea, keywords in initial_keywords.items():
+        all_keywords.extend(keywords)
+    
+    # Remove duplicates while preserving order
+    unique_keywords = list(dict.fromkeys(all_keywords))
+    
+    if not unique_keywords:
+        raise ValueError("No keywords found to search for apps.")
+    
+    print(f"Searching App Store for {len(unique_keywords)} unique keywords...")
+    
+    apps_by_keyword = {}
+    failed_keywords = []
+    
+    # Search for apps using each keyword
+    for keyword in unique_keywords:
+        try:
+            print(f"Searching for apps with keyword: '{keyword}'")
+            
+            # Search App Store for this keyword
+            apps = await search_app_store(keyword, country="us", num=10)
+            
+            if not apps:
+                print(f"No apps found for keyword: '{keyword}'")
+                apps_by_keyword[keyword] = []
+            else:
+                # Extract app IDs from AppstoreApp objects
+                app_ids = [app.app_id for app in apps]
+                apps_by_keyword[keyword] = app_ids
+                print(f"Found {len(app_ids)} apps for '{keyword}': {app_ids[:3]}{'...' if len(app_ids) > 3 else ''}")
+                
+        except Exception as e:
+            failed_keywords.append(keyword)
+            print(f"Failed to search for keyword '{keyword}': {e}")
+            apps_by_keyword[keyword] = []
+    
+    # Calculate statistics
+    total_apps = sum(len(app_ids) for app_ids in apps_by_keyword.values())
+    successful_keywords = len([k for k, v in apps_by_keyword.items() if v])
+    
+    print(f"\n📊 App Search Results:")
+    print(f"  • Keywords processed: {len(unique_keywords)}")
+    print(f"  • Keywords with apps: {successful_keywords}")
+    print(f"  • Total apps found: {total_apps}")
+    
+    if failed_keywords:
+        print(f"  • Failed keywords: {len(failed_keywords)}")
+        print(f"    {failed_keywords}")
+    
+    # Validate results
+    if not any(apps_by_keyword.values()):
+        raise RuntimeError("No apps found for any keywords. Cannot proceed with market analysis.")
+    
+    if len(failed_keywords) == len(unique_keywords):
+        raise RuntimeError("Failed to search for all keywords. Check your network connection and try again.")
+    
+    return {"apps_by_keyword": apps_by_keyword}
+
+
 async def get_keyword_total_market_size(state: dict) -> dict:
     """
     LangGraph node to analyze market size for keywords by fetching app revenues.
@@ -120,11 +194,11 @@ graph = (
     StateGraph(State, config_schema=Configuration)
     .add_node("collect_app_ideas", collect_app_ideas)
     .add_node("generate_initial_keywords", generate_initial_keywords)
+    .add_node("search_apps_for_keywords", search_apps_for_keywords)
     .add_node("get_keyword_total_market_size", get_keyword_total_market_size)
     .add_edge("__start__", "collect_app_ideas")
     .add_edge("collect_app_ideas", "generate_initial_keywords")
-    # Note: get_keyword_total_market_size requires apps_by_keyword data
-    # This edge would be added after implementing the app search functionality
-    # .add_edge("some_app_search_node", "get_keyword_total_market_size")
+    .add_edge("generate_initial_keywords", "search_apps_for_keywords")
+    .add_edge("search_apps_for_keywords", "get_keyword_total_market_size")
     .compile(name="ASO Researcher")
 )
