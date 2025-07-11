@@ -8,6 +8,7 @@ from lib.keywords import generate_keywords
 from lib.sensor_tower import get_apps_revenue
 from lib.appstore import search_app_store
 from lib.keyword_difficulty import analyze_keyword_difficulty_from_appstore_apps
+from lib.cache_store import get_cache_store
 
 
 class Configuration(TypedDict):
@@ -77,30 +78,46 @@ async def search_apps_for_keywords(state: dict) -> dict:
     apps_data_by_keyword = {}
     failed_keywords = []
     
+    # Get cache instance
+    cache = get_cache_store()
+    
     # Search for apps using each keyword
     for keyword in unique_keywords:
-        try:
-            print(f"Searching for apps with keyword: '{keyword}'")
-            
-            # Search App Store for this keyword
-            apps = await search_app_store(keyword, country="us", num=20)
-            
-            if not apps:
-                print(f"No apps found for keyword: '{keyword}'")
+        # Check cache first
+        cached_app_ids = cache.get_keyword_apps(keyword)
+        
+        if cached_app_ids:
+            print(f"Using cached apps for keyword: '{keyword}' ({len(cached_app_ids)} apps)")
+            apps_by_keyword[keyword] = cached_app_ids
+            # We'll need to fetch full app data when needed for difficulty analysis
+            apps_data_by_keyword[keyword] = []  # Will be populated later if needed
+        else:
+            try:
+                print(f"Searching for apps with keyword: '{keyword}'")
+                
+                # Search App Store for this keyword
+                apps = await search_app_store(keyword, country="us", num=20)
+                
+                if not apps:
+                    print(f"No apps found for keyword: '{keyword}'")
+                    apps_by_keyword[keyword] = []
+                    apps_data_by_keyword[keyword] = []
+                else:
+                    # Extract app IDs from AppstoreApp objects
+                    app_ids = [app.app_id for app in apps]
+                    apps_by_keyword[keyword] = app_ids
+                    apps_data_by_keyword[keyword] = apps
+                    
+                    # Cache the keyword-app associations
+                    cache.set_keyword_apps(keyword, app_ids)
+                    
+                    print(f"Found {len(app_ids)} apps for '{keyword}': {app_ids[:3]}{'...' if len(app_ids) > 3 else ''}")
+                    
+            except Exception as e:
+                failed_keywords.append(keyword)
+                print(f"Failed to search for keyword '{keyword}': {e}")
                 apps_by_keyword[keyword] = []
                 apps_data_by_keyword[keyword] = []
-            else:
-                # Extract app IDs from AppstoreApp objects
-                app_ids = [app.app_id for app in apps]
-                apps_by_keyword[keyword] = app_ids
-                apps_data_by_keyword[keyword] = apps
-                print(f"Found {len(app_ids)} apps for '{keyword}': {app_ids[:3]}{'...' if len(app_ids) > 3 else ''}")
-                
-        except Exception as e:
-            failed_keywords.append(keyword)
-            print(f"Failed to search for keyword '{keyword}': {e}")
-            apps_by_keyword[keyword] = []
-            apps_data_by_keyword[keyword] = []
     
     # Calculate statistics
     total_apps = sum(len(app_ids) for app_ids in apps_by_keyword.values())
@@ -388,13 +405,22 @@ def generate_final_report(state: dict) -> dict:
     high_value_keywords = len(filtered_keywords)
     total_market_size = sum(revenue_by_keyword.values())
     
+    # Get cache statistics
+    cache = get_cache_store()
+    cache_stats = cache.get_cache_stats()
+    
     final_report = {
         "analysis_summary": {
             "total_app_ideas": len(ideas),
             "total_keywords_analyzed": total_keywords_analyzed,
             "high_value_keywords": high_value_keywords,
             "total_market_size_usd": total_market_size,
-            "difficulty_analyses_completed": len(difficulty_by_keyword)
+            "difficulty_analyses_completed": len(difficulty_by_keyword),
+            "cache_usage": {
+                "cached_keywords": cache_stats.get('active_keywords', 0),
+                "cached_revenues": cache_stats.get('active_revenues', 0),
+                "total_cached_items": cache_stats.get('total_keywords', 0) + cache_stats.get('total_revenues', 0)
+            }
         },
         "app_recommendations": app_recommendations,
         "top_overall_opportunities": keyword_opportunities[:20]
@@ -406,6 +432,7 @@ def generate_final_report(state: dict) -> dict:
     print(f"  • Keywords evaluated: {total_keywords_analyzed}")
     print(f"  • High-value keywords (>${50000:,}+): {high_value_keywords}")
     print(f"  • Total market opportunity: ${total_market_size:,.2f}")
+    print(f"  • Cache hits: {cache_stats.get('active_keywords', 0)} keywords, {cache_stats.get('active_revenues', 0)} revenues")
     
     # Print top opportunities for each app
     for idea, rec in app_recommendations.items():

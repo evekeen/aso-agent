@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, Union
 from math import sqrt
+from lib.cache_store import get_cache_store
 
 
 @dataclass
@@ -272,7 +273,31 @@ def calculate_keyword_difficulty(keyword: str, apps: List[Dict]) -> KeywordDiffi
 
 
 def analyze_keyword_difficulty_from_appstore_apps(keyword: str, apps) -> KeywordDifficultyResult:
-    """Analyze keyword difficulty from AppstoreApp objects."""
+    """Analyze keyword difficulty from AppstoreApp objects with caching."""
+    # Get cache instance
+    cache = get_cache_store()
+    
+    # Check cache first
+    cached_result = cache.get_keyword_difficulty(keyword)
+    if cached_result:
+        # Convert cached data to KeywordDifficultyResult
+        return KeywordDifficultyResult(
+            keyword=cached_result.keyword,
+            title_matches=TitleMatchResult(
+                exact=0,  # Not stored individually
+                broad=0,
+                partial=0,
+                none=0,
+                score=cached_result.title_matches_score
+            ),
+            competitors=cached_result.competitors,
+            competitors_score=cached_result.competitors_score,
+            installs_score=cached_result.installs_score,
+            rating_score=cached_result.rating_score,
+            age_score=cached_result.age_score,
+            score=cached_result.difficulty_score
+        )
+    
     # Convert AppstoreApp objects to dict format expected by algorithm
     app_dicts = []
     for app in apps:
@@ -291,4 +316,18 @@ def analyze_keyword_difficulty_from_appstore_apps(keyword: str, apps) -> Keyword
         
         app_dicts.append(app_dict)
     
-    return calculate_keyword_difficulty(keyword, app_dicts)
+    # Calculate difficulty
+    result = calculate_keyword_difficulty(keyword, app_dicts)
+    
+    # Cache the result
+    cache.set_keyword_difficulty(keyword, {
+        'score': result.score,
+        'title_matches': {'score': result.title_matches.score},
+        'competitors': result.competitors,
+        'competitors_score': result.competitors_score,
+        'installs_score': result.installs_score,
+        'rating_score': result.rating_score,
+        'age_score': result.age_score
+    })
+    
+    return result

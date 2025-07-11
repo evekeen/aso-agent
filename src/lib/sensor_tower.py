@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Union
 import aiohttp
 from pydantic import BaseModel
+from lib.cache_store import get_cache_store, CachedRevenue
 
 
 class SensorTowerAppData(BaseModel):
@@ -169,66 +170,11 @@ class SensorTowerAPIClient:
             raise ValueError(f"Failed to parse app data: {e}")
 
 
-class SimpleCache:
-    """Simple in-memory cache for Sensor Tower data."""
-    
-    def __init__(self, ttl_hours: int = 24):
-        self.cache: Dict[str, dict] = {}
-        self.ttl = timedelta(hours=ttl_hours)
-    
-    def get(self, app_id: str) -> Optional[AppRevenueResult]:
-        """Get cached data for an app."""
-        if app_id not in self.cache:
-            return None
-        
-        cached_item = self.cache[app_id]
-        cached_time = datetime.fromisoformat(cached_item["timestamp"])
-        
-        # Check if cache is expired
-        if datetime.now() - cached_time > self.ttl:
-            del self.cache[app_id]
-            return None
-        
-        # Return cached result
-        data = cached_item["data"]
-        data["source"] = "cache"
-        return AppRevenueResult(**data)
-    
-    def set(self, app_id: str, result: AppRevenueResult):
-        """Cache app revenue result."""
-        self.cache[app_id] = {
-            "timestamp": datetime.now().isoformat(),
-            "data": {
-                "app_id": result.app_id,
-                "app_name": result.app_name,
-                "publisher": result.publisher,
-                "last_month_revenue_usd": result.last_month_revenue_usd,
-                "last_month_revenue_string": result.last_month_revenue_string,
-                "last_month_downloads": result.last_month_downloads,
-                "last_month_downloads_string": result.last_month_downloads_string,
-                "bundle_id": result.bundle_id,
-                "version": result.version,
-                "rating": result.rating,
-                "last_updated": result.last_updated,
-                "source": result.source
-            }
-        }
-    
-    def get_stats(self) -> dict:
-        """Get cache statistics."""
-        return {
-            "total_items": len(self.cache),
-            "cache_keys": list(self.cache.keys())
-        }
-
-
-# Global cache instance
-cache = SimpleCache()
 
 
 async def get_apps_revenue(app_ids: List[str]) -> Dict[str, Union[AppRevenueResult, str]]:
     """
-    Fetch revenue data for a list of app IDs with caching.
+    Fetch revenue data for a list of app IDs with DB caching.
     
     Args:
         app_ids: List of iOS app IDs
@@ -242,11 +188,30 @@ async def get_apps_revenue(app_ids: List[str]) -> Dict[str, Union[AppRevenueResu
     results = {}
     missing_app_ids = []
     
-    # Check cache first
+    # Get SQLite cache instance
+    db_cache = get_cache_store()
+    
+    # Check SQLite cache first (bulk query)
+    cached_revenues = db_cache.get_bulk_revenues(app_ids)
+    
     for app_id in app_ids:
-        cached_result = cache.get(app_id)
-        if cached_result:
-            results[app_id] = cached_result
+        if app_id in cached_revenues:
+            # Convert cached data to AppRevenueResult
+            cached = cached_revenues[app_id]
+            results[app_id] = AppRevenueResult(
+                app_id=cached.app_id,
+                app_name=cached.app_name,
+                publisher=cached.publisher,
+                last_month_revenue_usd=cached.revenue_usd,
+                last_month_revenue_string=cached.revenue_string,
+                last_month_downloads=cached.downloads,
+                last_month_downloads_string=cached.downloads_string,
+                bundle_id="",  # Not stored in cache
+                version="",    # Not stored in cache
+                rating=None,   # Not stored in cache
+                last_updated="",  # Not stored in cache
+                source="cache"
+            )
         else:
             missing_app_ids.append(app_id)
     
@@ -260,8 +225,8 @@ async def get_apps_revenue(app_ids: List[str]) -> Dict[str, Union[AppRevenueResu
                     if isinstance(result, Exception):
                         results[app_id] = str(result)
                     else:
-                        # Cache successful result
-                        cache.set(app_id, result)
+                        # Cache successful result in DB
+                        db_cache.set_app_revenue(app_id, result)
                         results[app_id] = result
                         
         except Exception as e:
