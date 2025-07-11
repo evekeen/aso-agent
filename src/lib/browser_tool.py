@@ -202,6 +202,59 @@ class ASOBrowserTasks:
         Be thorough and accurate in reporting the results.
         """
         return task
+    
+    @staticmethod
+    def get_difficulty_and_traffic_for_keywords(keywords: List[str]) -> str:
+        return f"""
+            ### Goal
+            Extract keyword difficulty and traffic metrics from the ASO Mobile platform using automated navigation and AI-driven keyword suggestions.
+
+            ---
+
+            ### 📌 Execution Overview
+
+            1. **Clean slate**: Delete all existing keywords from ASO Mobile
+            2. **Keyword injection**: Add input keywords
+            3. **AI enhancement**: Expand list using AI-suggested keywords
+            4. **Data export**: Download XLSX report
+            5. **Metric extraction**: Parse XLSX to extract difficulty and traffic values
+
+            > 💡 Note: Ensure you're logged into ASO Mobile. This script assumes the "bedtimefan" app is available and credentials are auto-filled.
+
+            ---
+
+            ### 📂 Input - Comma-separated string or list of keyword terms
+            {keywords}
+
+
+            🔁 Step-by-Step Instructions
+
+            1. Navigation
+                •	Open ASO Mobile dashboard: https://app.asomobile.net/monitor/list-view
+
+            2. Authentication
+                •	It is assumed that you are already logged in
+            3. App Selection
+                •	Next button to the left of the "+ Application" button is the app selection dropdown
+                •	Open the dropdown and select “Bedtime Fan: White nose baby” app
+
+            4. Access Keyword Monitor
+                - Navigate to "Keyword monitor" section in left sidebar
+                - Click to access keyword monitoring interface
+
+            5. Delete Existing Keywords
+                - Click delete all "Trash" icon button in the keyword table header on the rightmost column
+                - Click "Yes" button to confirm deletion
+
+            6. Add Input Keywords
+            - Click "➕ Add keywords" button (top-right corner)
+            - Enter comma-separated keywords for current idea from Phase 1
+            - Click "Add" button to confirm at the bottom right of the modal
+
+            7. Export Keyword Report
+                - Click "Download XLS file" button (top-right corner, 4th in a row with "➕ Add keywords")
+                - XLSX report will be downloaded with keyword data in the Downloads folder
+            """
 
 
 # Convenience function for quick browser automation
@@ -230,10 +283,9 @@ async def automate_aso_task(
 # Example usage for testing
 if __name__ == "__main__":
     async def test_browser_tool():
-        # Test adding an app to ASO Mobile
-        task = ASOBrowserTasks.add_app_to_aso_mobile(
-            "https://apps.apple.com/us/app/satellite-tracker-by-star-walk/id1248172706",
-            add_keywords=True
+        # Test getting difficulty and traffic for keywords
+        task = ASOBrowserTasks.get_difficulty_and_traffic_for_keywords(
+            "sleep sounds, white noise, bedtime stories, lullabies, meditation music"
         )
         
         result = await automate_aso_task(task)
