@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TypedDict, List, Literal
+from datetime import datetime
 from langgraph.graph import MessagesState, StateGraph
 from langgraph.types import Command
 from lib.keywords import generate_keywords
@@ -334,112 +335,110 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
 
 def generate_final_report(state: dict) -> dict:
     """
-    Generate comprehensive ASO analysis report with market opportunities and keyword recommendations.
+    Generate ASO analysis report structured for agent consumption.
+    
+    Report format for each app idea:
+    1. Best possible market size
+    2. Dictionary of all keywords with difficulty, traffic, and market size ratings
     """
     ideas = state.get("ideas", [])
     revenue_by_keyword = state.get("revenue_by_keyword", {})
     difficulty_by_keyword = state.get("difficulty_by_keyword", {})
-    filtered_keywords = state.get("filtered_keywords", [])
+    initial_keywords = state.get("initial_keywords", {})
     
-    print(f"\n📊 Generating Final ASO Analysis Report...")
+    print(f"\n📊 Generating Final ASO Analysis Report for Agent Consumption...")
     
-    # Calculate market opportunity score for each keyword
-    keyword_opportunities = []
-    for keyword in revenue_by_keyword.keys():
-        revenue = revenue_by_keyword.get(keyword, 0)
-        difficulty = difficulty_by_keyword.get(keyword, 10)  # Default to high difficulty if not analyzed
-        
-        # Opportunity score: higher revenue, lower difficulty = better opportunity
-        # Formula: (revenue / 100000) * (11 - difficulty) to balance revenue and difficulty
-        opportunity_score = (revenue / 100000) * (11 - difficulty)
-        
-        keyword_opportunities.append({
-            "keyword": keyword,
-            "market_size_usd": revenue,
-            "difficulty_score": difficulty,
-            "opportunity_score": round(opportunity_score, 2),
-            "analyzed": keyword in difficulty_by_keyword
-        })
+    # Generate structured report for each app idea
+    app_analysis = {}
     
-    # Sort by opportunity score
-    keyword_opportunities.sort(key=lambda x: x["opportunity_score"], reverse=True)
-    
-    # Generate recommendations for each app idea
-    app_recommendations = {}
     for idea in ideas:
-        # Get keywords related to this idea from initial_keywords if available
-        initial_keywords = state.get("initial_keywords", {})
+        # Get keywords related to this idea
         idea_keywords = initial_keywords.get(idea, [])
         
-        # Filter opportunities for this idea's keywords
-        idea_opportunities = [
-            opp for opp in keyword_opportunities 
-            if opp["keyword"] in idea_keywords
-        ]
-        
-        # Get top 10 opportunities for this idea
-        top_opportunities = idea_opportunities[:10]
-        
-        # Calculate total market size for this idea
-        total_market = sum(opp["market_size_usd"] for opp in idea_opportunities)
-        
-        # Categorize keywords by difficulty
-        easy_keywords = [opp for opp in idea_opportunities if opp["difficulty_score"] <= 3]
-        medium_keywords = [opp for opp in idea_opportunities if 3 < opp["difficulty_score"] <= 6]
-        hard_keywords = [opp for opp in idea_opportunities if opp["difficulty_score"] > 6]
-        
-        app_recommendations[idea] = {
-            "total_market_size_usd": total_market,
-            "total_keywords": len(idea_opportunities),
-            "analyzed_keywords": len([opp for opp in idea_opportunities if opp["analyzed"]]),
-            "top_opportunities": top_opportunities,
-            "difficulty_breakdown": {
-                "easy": len(easy_keywords),
-                "medium": len(medium_keywords),
-                "hard": len(hard_keywords)
+        if not idea_keywords:
+            app_analysis[idea] = {
+                "best_possible_market_size_usd": 0,
+                "keywords": {}
             }
+            continue
+        
+        # Calculate best possible market size (maximum value of all keywords for this idea)
+        keyword_market_sizes = [
+            revenue_by_keyword.get(keyword, 0) 
+            for keyword in idea_keywords
+        ]
+        best_possible_market_size = max(keyword_market_sizes) if keyword_market_sizes else 0
+        
+        # Build keyword dictionary with all metrics
+        keywords_data = {}
+        for keyword in idea_keywords:
+            market_size = revenue_by_keyword.get(keyword, 0)
+            difficulty_score = difficulty_by_keyword.get(keyword, 5.0)  # Default to medium difficulty
+            traffic_rating = 1.0  # Placeholder value as requested
+            
+            keywords_data[keyword] = {
+                "difficulty_rating": round(difficulty_score, 2),
+                "traffic_rating": traffic_rating,
+                "market_size_usd": market_size
+            }
+        
+        app_analysis[idea] = {
+            "best_possible_market_size_usd": best_possible_market_size,
+            "keywords": keywords_data
         }
     
-    # Overall statistics
+    # Calculate overall statistics for logging
     total_keywords_analyzed = len(revenue_by_keyword)
-    high_value_keywords = len(filtered_keywords)
     total_market_size = sum(revenue_by_keyword.values())
+    difficulty_analyses_completed = len(difficulty_by_keyword)
     
     # Get cache statistics
     cache = get_cache_store()
     cache_stats = cache.get_cache_stats()
     
+    # Structure final report for agent consumption
     final_report = {
-        "analysis_summary": {
-            "total_app_ideas": len(ideas),
+        "timestamp": datetime.now().isoformat(),
+        "analysis_metadata": {
             "total_keywords_analyzed": total_keywords_analyzed,
-            "high_value_keywords": high_value_keywords,
+            "difficulty_analyses_completed": difficulty_analyses_completed,
             "total_market_size_usd": total_market_size,
-            "difficulty_analyses_completed": len(difficulty_by_keyword),
-            "cache_usage": {
-                "cached_keywords": cache_stats.get('active_keywords', 0),
-                "cached_revenues": cache_stats.get('active_revenues', 0),
-                "total_cached_items": cache_stats.get('total_keywords', 0) + cache_stats.get('total_revenues', 0)
+            "cache_hits": {
+                "keywords": cache_stats.get('active_keywords', 0),
+                "revenues": cache_stats.get('active_revenues', 0)
             }
         },
-        "app_recommendations": app_recommendations,
-        "top_overall_opportunities": keyword_opportunities[:20]
+        "app_ideas": app_analysis
     }
     
-    # Print summary
-    print(f"✅ Report Generated Successfully!")
+    # Print summary for monitoring
+    print(f"✅ Agent-Ready Report Generated!")
     print(f"  • App ideas analyzed: {len(ideas)}")
     print(f"  • Keywords evaluated: {total_keywords_analyzed}")
-    print(f"  • High-value keywords (>${50000:,}+): {high_value_keywords}")
+    print(f"  • Difficulty analyses: {difficulty_analyses_completed}")
     print(f"  • Total market opportunity: ${total_market_size:,.2f}")
-    print(f"  • Cache hits: {cache_stats.get('active_keywords', 0)} keywords, {cache_stats.get('active_revenues', 0)} revenues")
+    print(f"  • Cache efficiency: {cache_stats.get('active_keywords', 0)} keyword hits, {cache_stats.get('active_revenues', 0)} revenue hits")
     
-    # Print top opportunities for each app
-    for idea, rec in app_recommendations.items():
+    # Print structured data for each app idea
+    for idea, analysis in app_analysis.items():
+        keywords_count = len(analysis['keywords'])
+        best_market = analysis['best_possible_market_size_usd']
+        
         print(f"\n🎯 {idea.title()}:")
-        print(f"  • Market size: ${rec['total_market_size_usd']:,.2f}")
-        print(f"  • Top keyword: {rec['top_opportunities'][0]['keyword'] if rec['top_opportunities'] else 'None'}")
-        print(f"  • Difficulty breakdown: {rec['difficulty_breakdown']['easy']} easy, {rec['difficulty_breakdown']['medium']} medium, {rec['difficulty_breakdown']['hard']} hard")
+        print(f"  • Best possible market size: ${best_market:,.2f}")
+        print(f"  • Total keywords: {keywords_count}")
+        
+        if keywords_count > 0:
+            # Show top 3 keywords by market size
+            top_keywords = sorted(
+                analysis['keywords'].items(), 
+                key=lambda x: x[1]['market_size_usd'], 
+                reverse=True
+            )[:3]
+            
+            print(f"  • Top keywords by market size:")
+            for keyword, data in top_keywords:
+                print(f"    - '{keyword}': ${data['market_size_usd']:,.0f} (difficulty: {data['difficulty_rating']})")
     
     return {"final_report": final_report}
 
