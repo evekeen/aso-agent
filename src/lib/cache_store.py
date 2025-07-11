@@ -1,7 +1,7 @@
-"""Cache store for ASO analysis data using SQLite."""
+"""Cache store for ASO analysis data using async SQLite."""
 
 import json
-import sqlite3
+import aiosqlite
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -37,20 +37,24 @@ class CachedRevenue:
 
 
 class ASOCacheStore:
-    """SQLite-based cache for ASO analysis data."""
+    """Async SQLite-based cache for ASO analysis data."""
     
     def __init__(self, db_path: str = "aso_cache.db", ttl_days: int = 30):
         self.db_path = db_path
         self.ttl_days = ttl_days
-        self._init_db()
+        self._initialized = False
     
-    def _init_db(self):
-        """Initialize database tables."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
+    async def _ensure_initialized(self):
+        """Ensure database is initialized (async lazy initialization)."""
+        if not self._initialized:
+            await self._init_db()
+            self._initialized = True
+    
+    async def _init_db(self):
+        """Initialize database tables asynchronously."""
+        async with aiosqlite.connect(self.db_path) as conn:
             # Keyword difficulty cache table
-            cursor.execute("""
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS keyword_difficulty_cache (
                     keyword TEXT PRIMARY KEY,
                     difficulty_score REAL,
@@ -66,7 +70,7 @@ class ASOCacheStore:
             """)
             
             # Revenue cache table
-            cursor.execute("""
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS revenue_cache (
                     app_id TEXT PRIMARY KEY,
                     revenue_usd REAL,
@@ -81,7 +85,7 @@ class ASOCacheStore:
             """)
             
             # Keyword-app associations table (for market size calculations)
-            cursor.execute("""
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS keyword_app_associations (
                     keyword TEXT,
                     app_id TEXT,
@@ -93,27 +97,28 @@ class ASOCacheStore:
             """)
             
             # Create indexes for performance
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_keyword_expires ON keyword_difficulty_cache(expires_at)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_revenue_expires ON revenue_cache(expires_at)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_associations_keyword ON keyword_app_associations(keyword)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_keyword_expires ON keyword_difficulty_cache(expires_at)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_revenue_expires ON revenue_cache(expires_at)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_associations_keyword ON keyword_app_associations(keyword)")
             
-            conn.commit()
+            await conn.commit()
     
     def _calculate_expiry(self) -> str:
         """Calculate expiry timestamp."""
         expiry = datetime.now() + timedelta(days=self.ttl_days)
         return expiry.isoformat()
     
-    def get_keyword_difficulty(self, keyword: str) -> Optional[CachedKeywordDifficulty]:
+    async def get_keyword_difficulty(self, keyword: str) -> Optional[CachedKeywordDifficulty]:
         """Get cached keyword difficulty if not expired."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+        await self._ensure_initialized()
+        
+        async with aiosqlite.connect(self.db_path) as conn:
+            cursor = await conn.execute("""
                 SELECT * FROM keyword_difficulty_cache 
                 WHERE keyword = ? AND expires_at > ?
             """, (keyword.lower(), datetime.now().isoformat()))
             
-            row = cursor.fetchone()
+            row = await cursor.fetchone()
             if row:
                 return CachedKeywordDifficulty(
                     keyword=row[0],
@@ -129,14 +134,15 @@ class ASOCacheStore:
                 )
         return None
     
-    def set_keyword_difficulty(self, keyword: str, difficulty_result: Dict[str, Any]):
+    async def set_keyword_difficulty(self, keyword: str, difficulty_result: Dict[str, Any]):
         """Cache keyword difficulty analysis result."""
+        await self._ensure_initialized()
+        
         now = datetime.now().isoformat()
         expires_at = self._calculate_expiry()
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+        async with aiosqlite.connect(self.db_path) as conn:
+            await conn.execute("""
                 INSERT OR REPLACE INTO keyword_difficulty_cache 
                 (keyword, difficulty_score, title_matches_score, competitors, 
                  competitors_score, installs_score, rating_score, age_score, 
@@ -154,18 +160,19 @@ class ASOCacheStore:
                 now,
                 expires_at
             ))
-            conn.commit()
+            await conn.commit()
     
-    def get_app_revenue(self, app_id: str) -> Optional[CachedRevenue]:
+    async def get_app_revenue(self, app_id: str) -> Optional[CachedRevenue]:
         """Get cached app revenue if not expired."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+        await self._ensure_initialized()
+        
+        async with aiosqlite.connect(self.db_path) as conn:
+            cursor = await conn.execute("""
                 SELECT * FROM revenue_cache 
                 WHERE app_id = ? AND expires_at > ?
             """, (app_id, datetime.now().isoformat()))
             
-            row = cursor.fetchone()
+            row = await cursor.fetchone()
             if row:
                 return CachedRevenue(
                     app_id=row[0],
@@ -180,14 +187,15 @@ class ASOCacheStore:
                 )
         return None
     
-    def set_app_revenue(self, app_id: str, revenue_result: Any):
+    async def set_app_revenue(self, app_id: str, revenue_result: Any):
         """Cache app revenue analysis result."""
+        await self._ensure_initialized()
+        
         now = datetime.now().isoformat()
         expires_at = self._calculate_expiry()
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+        async with aiosqlite.connect(self.db_path) as conn:
+            await conn.execute("""
                 INSERT OR REPLACE INTO revenue_cache 
                 (app_id, revenue_usd, revenue_string, downloads, downloads_string,
                  app_name, publisher, analyzed_at, expires_at)
@@ -203,46 +211,50 @@ class ASOCacheStore:
                 now,
                 expires_at
             ))
-            conn.commit()
+            await conn.commit()
     
-    def set_keyword_apps(self, keyword: str, app_ids: List[str]):
+    async def set_keyword_apps(self, keyword: str, app_ids: List[str]):
         """Cache keyword-app associations for market size calculations."""
+        await self._ensure_initialized()
+        
         now = datetime.now().isoformat()
         expires_at = self._calculate_expiry()
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
+        async with aiosqlite.connect(self.db_path) as conn:
             # Remove old associations
-            cursor.execute("DELETE FROM keyword_app_associations WHERE keyword = ?", 
-                         (keyword.lower(),))
+            await conn.execute("DELETE FROM keyword_app_associations WHERE keyword = ?", 
+                             (keyword.lower(),))
             
             # Insert new associations
             for position, app_id in enumerate(app_ids):
-                cursor.execute("""
+                await conn.execute("""
                     INSERT INTO keyword_app_associations 
                     (keyword, app_id, position, analyzed_at, expires_at)
                     VALUES (?, ?, ?, ?, ?)
                 """, (keyword.lower(), app_id, position, now, expires_at))
             
-            conn.commit()
+            await conn.commit()
     
-    def get_keyword_apps(self, keyword: str) -> List[str]:
+    async def get_keyword_apps(self, keyword: str) -> List[str]:
         """Get cached app IDs for a keyword if not expired."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+        await self._ensure_initialized()
+        
+        async with aiosqlite.connect(self.db_path) as conn:
+            cursor = await conn.execute("""
                 SELECT app_id FROM keyword_app_associations 
                 WHERE keyword = ? AND expires_at > ?
                 ORDER BY position
             """, (keyword.lower(), datetime.now().isoformat()))
             
-            return [row[0] for row in cursor.fetchall()]
+            rows = await cursor.fetchall()
+            return [row[0] for row in rows]
     
-    def get_bulk_revenues(self, app_ids: List[str]) -> Dict[str, CachedRevenue]:
+    async def get_bulk_revenues(self, app_ids: List[str]) -> Dict[str, CachedRevenue]:
         """Get multiple app revenues in one query."""
         if not app_ids:
             return {}
+        
+        await self._ensure_initialized()
         
         placeholders = ','.join('?' * len(app_ids))
         query = f"""
@@ -251,11 +263,11 @@ class ASOCacheStore:
         """
         
         results = {}
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute(query, app_ids + [datetime.now().isoformat()])
+        async with aiosqlite.connect(self.db_path) as conn:
+            cursor = await conn.execute(query, app_ids + [datetime.now().isoformat()])
             
-            for row in cursor.fetchall():
+            rows = await cursor.fetchall()
+            for row in rows:
                 revenue = CachedRevenue(
                     app_id=row[0],
                     revenue_usd=row[1],
@@ -271,44 +283,49 @@ class ASOCacheStore:
         
         return results
     
-    def clear_expired(self):
+    async def clear_expired(self):
         """Remove expired cache entries."""
+        await self._ensure_initialized()
+        
         now = datetime.now().isoformat()
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM keyword_difficulty_cache WHERE expires_at < ?", (now,))
-            cursor.execute("DELETE FROM revenue_cache WHERE expires_at < ?", (now,))
-            cursor.execute("DELETE FROM keyword_app_associations WHERE expires_at < ?", (now,))
-            conn.commit()
+        async with aiosqlite.connect(self.db_path) as conn:
+            await conn.execute("DELETE FROM keyword_difficulty_cache WHERE expires_at < ?", (now,))
+            await conn.execute("DELETE FROM revenue_cache WHERE expires_at < ?", (now,))
+            await conn.execute("DELETE FROM keyword_app_associations WHERE expires_at < ?", (now,))
+            await conn.commit()
     
-    def get_cache_stats(self) -> Dict[str, int]:
+    async def get_cache_stats(self) -> Dict[str, int]:
         """Get cache statistics."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
+        await self._ensure_initialized()
+        
+        async with aiosqlite.connect(self.db_path) as conn:
             stats = {}
             
             # Total cached keywords
-            cursor.execute("SELECT COUNT(*) FROM keyword_difficulty_cache")
-            stats['total_keywords'] = cursor.fetchone()[0]
+            cursor = await conn.execute("SELECT COUNT(*) FROM keyword_difficulty_cache")
+            row = await cursor.fetchone()
+            stats['total_keywords'] = row[0]
             
             # Active (non-expired) keywords
-            cursor.execute("""
+            cursor = await conn.execute("""
                 SELECT COUNT(*) FROM keyword_difficulty_cache 
                 WHERE expires_at > ?
             """, (datetime.now().isoformat(),))
-            stats['active_keywords'] = cursor.fetchone()[0]
+            row = await cursor.fetchone()
+            stats['active_keywords'] = row[0]
             
             # Total cached revenues
-            cursor.execute("SELECT COUNT(*) FROM revenue_cache")
-            stats['total_revenues'] = cursor.fetchone()[0]
+            cursor = await conn.execute("SELECT COUNT(*) FROM revenue_cache")
+            row = await cursor.fetchone()
+            stats['total_revenues'] = row[0]
             
             # Active revenues
-            cursor.execute("""
+            cursor = await conn.execute("""
                 SELECT COUNT(*) FROM revenue_cache 
                 WHERE expires_at > ?
             """, (datetime.now().isoformat(),))
-            stats['active_revenues'] = cursor.fetchone()[0]
+            row = await cursor.fetchone()
+            stats['active_revenues'] = row[0]
             
             return stats
 

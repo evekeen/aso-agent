@@ -272,13 +272,13 @@ def calculate_keyword_difficulty(keyword: str, apps: List[Dict]) -> KeywordDiffi
     )
 
 
-def analyze_keyword_difficulty_from_appstore_apps(keyword: str, apps) -> KeywordDifficultyResult:
+async def analyze_keyword_difficulty_from_appstore_apps(keyword: str, apps) -> KeywordDifficultyResult:
     """Analyze keyword difficulty from AppstoreApp objects with caching."""
     # Get cache instance
     cache = get_cache_store()
     
     # Check cache first
-    cached_result = cache.get_keyword_difficulty(keyword)
+    cached_result = await cache.get_keyword_difficulty(keyword)
     if cached_result:
         # Convert cached data to KeywordDifficultyResult
         return KeywordDifficultyResult(
@@ -320,7 +320,7 @@ def analyze_keyword_difficulty_from_appstore_apps(keyword: str, apps) -> Keyword
     result = calculate_keyword_difficulty(keyword, app_dicts)
     
     # Cache the result
-    cache.set_keyword_difficulty(keyword, {
+    await cache.set_keyword_difficulty(keyword, {
         'score': result.score,
         'title_matches': {'score': result.title_matches.score},
         'competitors': result.competitors,

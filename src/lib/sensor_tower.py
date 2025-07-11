@@ -192,7 +192,7 @@ async def get_apps_revenue(app_ids: List[str]) -> Dict[str, Union[AppRevenueResu
     db_cache = get_cache_store()
     
     # Check SQLite cache first (bulk query)
-    cached_revenues = db_cache.get_bulk_revenues(app_ids)
+    cached_revenues = await db_cache.get_bulk_revenues(app_ids)
     
     for app_id in app_ids:
         if app_id in cached_revenues:
@@ -226,7 +226,7 @@ async def get_apps_revenue(app_ids: List[str]) -> Dict[str, Union[AppRevenueResu
                         results[app_id] = str(result)
                     else:
                         # Cache successful result in DB
-                        db_cache.set_app_revenue(app_id, result)
+                        await db_cache.set_app_revenue(app_id, result)
                         results[app_id] = result
                         
         except Exception as e:

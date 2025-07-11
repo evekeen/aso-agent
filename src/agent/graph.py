@@ -85,7 +85,7 @@ async def search_apps_for_keywords(state: dict) -> dict:
     # Search for apps using each keyword
     for keyword in unique_keywords:
         # Check cache first
-        cached_app_ids = cache.get_keyword_apps(keyword)
+        cached_app_ids = await cache.get_keyword_apps(keyword)
         
         if cached_app_ids:
             print(f"Using cached apps for keyword: '{keyword}' ({len(cached_app_ids)} apps)")
@@ -110,7 +110,7 @@ async def search_apps_for_keywords(state: dict) -> dict:
                     apps_data_by_keyword[keyword] = apps
                     
                     # Cache the keyword-app associations
-                    cache.set_keyword_apps(keyword, app_ids)
+                    await cache.set_keyword_apps(keyword, app_ids)
                     
                     print(f"Found {len(app_ids)} apps for '{keyword}': {app_ids[:3]}{'...' if len(app_ids) > 3 else ''}")
                     
@@ -300,7 +300,7 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
             print(f"Analyzing difficulty for keyword: '{keyword}' ({len(apps)} apps)")
             
             # Run difficulty analysis
-            result = analyze_keyword_difficulty_from_appstore_apps(keyword, apps)
+            result = await analyze_keyword_difficulty_from_appstore_apps(keyword, apps)
             difficulty_by_keyword[keyword] = result.score
             
             # Log detailed results
@@ -333,7 +333,7 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
     return {"difficulty_by_keyword": difficulty_by_keyword}
 
 
-def generate_final_report(state: dict) -> dict:
+async def generate_final_report(state: dict) -> dict:
     """
     Generate ASO analysis report structured for agent consumption.
     
@@ -394,7 +394,7 @@ def generate_final_report(state: dict) -> dict:
     
     # Get cache statistics
     cache = get_cache_store()
-    cache_stats = cache.get_cache_stats()
+    cache_stats = await cache.get_cache_stats()
     
     # Structure final report for agent consumption
     final_report = {
