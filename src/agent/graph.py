@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypedDict, List
+from typing import TypedDict, List, Literal
 from langgraph.graph import MessagesState, StateGraph
+from langgraph.types import Command
 from lib.keywords import generate_keywords
 from lib.sensor_tower import get_apps_revenue
 from lib.appstore import search_app_store
@@ -24,6 +25,8 @@ class State(MessagesState):
     revenue_by_keyword: dict[str, float]
     traffic_by_keyword: dict[str, float]
     difficulty_by_keyword: dict[str, float]
+    filtered_keywords: list[str]
+    final_report: dict
 
 
 def collect_app_ideas(state: dict) -> dict:
@@ -196,6 +199,61 @@ async def get_keyword_total_market_size(state: dict) -> dict:
         raise RuntimeError(f"Market size analysis failed: {e}")
 
 
+def filter_keywords_by_market_size(state: dict) -> Command[Literal["analyze_keyword_difficulty", "generate_final_report"]]:
+    """
+    Filter keywords by market size threshold before expensive difficulty analysis.
+    
+    Routes to:
+    - analyze_keyword_difficulty: if keywords meet market size threshold
+    - generate_final_report: if no keywords meet threshold
+    """
+    revenue_by_keyword = state.get("revenue_by_keyword", {})
+    apps_data_by_keyword = state.get("apps_data_by_keyword", {})
+    
+    if not revenue_by_keyword:
+        raise ValueError("No revenue data found. Please run market size analysis first.")
+    
+    # Filter keywords with market size > $50K
+    threshold = 50000
+    filtered_keywords = [
+        keyword for keyword, revenue in revenue_by_keyword.items() 
+        if revenue >= threshold
+    ]
+    
+    print(f"\n💰 Market Size Filtering Results:")
+    print(f"  • Total keywords analyzed: {len(revenue_by_keyword)}")
+    print(f"  • Threshold: ${threshold:,}")
+    print(f"  • Keywords meeting threshold: {len(filtered_keywords)}")
+    
+    if filtered_keywords:
+        print(f"  • High-value keywords: {', '.join(filtered_keywords[:5])}{'...' if len(filtered_keywords) > 5 else ''}")
+        
+        # Filter apps_data_by_keyword to only include high-value keywords
+        filtered_apps_data = {
+            keyword: apps_data_by_keyword.get(keyword, [])
+            for keyword in filtered_keywords
+        }
+        
+        return Command(
+            update={
+                "filtered_keywords": filtered_keywords,
+                "apps_data_by_keyword": filtered_apps_data
+            },
+            goto="analyze_keyword_difficulty"
+        )
+    else:
+        print("  • No keywords meet the market size threshold")
+        print("  • Skipping difficulty analysis and generating report with available data")
+        
+        return Command(
+            update={
+                "filtered_keywords": [],
+                "difficulty_by_keyword": {}
+            },
+            goto="generate_final_report"
+        )
+
+
 async def analyze_keyword_difficulty(state: dict) -> dict:
     """
     LangGraph node to analyze keyword difficulty using the iTunes algorithm.
@@ -257,17 +315,122 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
     return {"difficulty_by_keyword": difficulty_by_keyword}
 
 
+def generate_final_report(state: dict) -> dict:
+    """
+    Generate comprehensive ASO analysis report with market opportunities and keyword recommendations.
+    """
+    ideas = state.get("ideas", [])
+    revenue_by_keyword = state.get("revenue_by_keyword", {})
+    difficulty_by_keyword = state.get("difficulty_by_keyword", {})
+    filtered_keywords = state.get("filtered_keywords", [])
+    
+    print(f"\n📊 Generating Final ASO Analysis Report...")
+    
+    # Calculate market opportunity score for each keyword
+    keyword_opportunities = []
+    for keyword in revenue_by_keyword.keys():
+        revenue = revenue_by_keyword.get(keyword, 0)
+        difficulty = difficulty_by_keyword.get(keyword, 10)  # Default to high difficulty if not analyzed
+        
+        # Opportunity score: higher revenue, lower difficulty = better opportunity
+        # Formula: (revenue / 100000) * (11 - difficulty) to balance revenue and difficulty
+        opportunity_score = (revenue / 100000) * (11 - difficulty)
+        
+        keyword_opportunities.append({
+            "keyword": keyword,
+            "market_size_usd": revenue,
+            "difficulty_score": difficulty,
+            "opportunity_score": round(opportunity_score, 2),
+            "analyzed": keyword in difficulty_by_keyword
+        })
+    
+    # Sort by opportunity score
+    keyword_opportunities.sort(key=lambda x: x["opportunity_score"], reverse=True)
+    
+    # Generate recommendations for each app idea
+    app_recommendations = {}
+    for idea in ideas:
+        # Get keywords related to this idea from initial_keywords if available
+        initial_keywords = state.get("initial_keywords", {})
+        idea_keywords = initial_keywords.get(idea, [])
+        
+        # Filter opportunities for this idea's keywords
+        idea_opportunities = [
+            opp for opp in keyword_opportunities 
+            if opp["keyword"] in idea_keywords
+        ]
+        
+        # Get top 10 opportunities for this idea
+        top_opportunities = idea_opportunities[:10]
+        
+        # Calculate total market size for this idea
+        total_market = sum(opp["market_size_usd"] for opp in idea_opportunities)
+        
+        # Categorize keywords by difficulty
+        easy_keywords = [opp for opp in idea_opportunities if opp["difficulty_score"] <= 3]
+        medium_keywords = [opp for opp in idea_opportunities if 3 < opp["difficulty_score"] <= 6]
+        hard_keywords = [opp for opp in idea_opportunities if opp["difficulty_score"] > 6]
+        
+        app_recommendations[idea] = {
+            "total_market_size_usd": total_market,
+            "total_keywords": len(idea_opportunities),
+            "analyzed_keywords": len([opp for opp in idea_opportunities if opp["analyzed"]]),
+            "top_opportunities": top_opportunities,
+            "difficulty_breakdown": {
+                "easy": len(easy_keywords),
+                "medium": len(medium_keywords),
+                "hard": len(hard_keywords)
+            }
+        }
+    
+    # Overall statistics
+    total_keywords_analyzed = len(revenue_by_keyword)
+    high_value_keywords = len(filtered_keywords)
+    total_market_size = sum(revenue_by_keyword.values())
+    
+    final_report = {
+        "analysis_summary": {
+            "total_app_ideas": len(ideas),
+            "total_keywords_analyzed": total_keywords_analyzed,
+            "high_value_keywords": high_value_keywords,
+            "total_market_size_usd": total_market_size,
+            "difficulty_analyses_completed": len(difficulty_by_keyword)
+        },
+        "app_recommendations": app_recommendations,
+        "top_overall_opportunities": keyword_opportunities[:20]
+    }
+    
+    # Print summary
+    print(f"✅ Report Generated Successfully!")
+    print(f"  • App ideas analyzed: {len(ideas)}")
+    print(f"  • Keywords evaluated: {total_keywords_analyzed}")
+    print(f"  • High-value keywords (>${50000:,}+): {high_value_keywords}")
+    print(f"  • Total market opportunity: ${total_market_size:,.2f}")
+    
+    # Print top opportunities for each app
+    for idea, rec in app_recommendations.items():
+        print(f"\n🎯 {idea.title()}:")
+        print(f"  • Market size: ${rec['total_market_size_usd']:,.2f}")
+        print(f"  • Top keyword: {rec['top_opportunities'][0]['keyword'] if rec['top_opportunities'] else 'None'}")
+        print(f"  • Difficulty breakdown: {rec['difficulty_breakdown']['easy']} easy, {rec['difficulty_breakdown']['medium']} medium, {rec['difficulty_breakdown']['hard']} hard")
+    
+    return {"final_report": final_report}
+
+
 graph = (
     StateGraph(State, config_schema=Configuration)
     .add_node("collect_app_ideas", collect_app_ideas)
     .add_node("generate_initial_keywords", generate_initial_keywords)
     .add_node("search_apps_for_keywords", search_apps_for_keywords)
     .add_node("get_keyword_total_market_size", get_keyword_total_market_size)
+    .add_node("filter_keywords_by_market_size", filter_keywords_by_market_size)
     .add_node("analyze_keyword_difficulty", analyze_keyword_difficulty)
+    .add_node("generate_final_report", generate_final_report)
     .add_edge("__start__", "collect_app_ideas")
     .add_edge("collect_app_ideas", "generate_initial_keywords")
     .add_edge("generate_initial_keywords", "search_apps_for_keywords")
     .add_edge("search_apps_for_keywords", "get_keyword_total_market_size")
-    .add_edge("get_keyword_total_market_size", "analyze_keyword_difficulty")
+    .add_edge("get_keyword_total_market_size", "filter_keywords_by_market_size")
+    .add_edge("analyze_keyword_difficulty", "generate_final_report")
     .compile(name="ASO Researcher")
 )
