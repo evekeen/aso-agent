@@ -224,7 +224,9 @@ class ASOBrowserTasks:
             ---
 
             ### 📂 Input - Comma-separated string or list of keyword terms
+            <keywords>
             {keywords}
+            </keywords>
 
 
             🔁 Step-by-Step Instructions
@@ -247,9 +249,9 @@ class ASOBrowserTasks:
                 - Click "Yes" button to confirm deletion
 
             6. Add Input Keywords
-            - Click "➕ Add keywords" button (top-right corner)
-            - Enter comma-separated keywords for current idea from Phase 1
-            - Click "Add" button to confirm at the bottom right of the modal
+                - Click "➕ Add keywords" button (top-right corner)
+                - Enter comma-separated keywords for current idea from Phase 1
+                - Click "Add" button to confirm at the bottom right of the modal
 
             7. Export Keyword Report
                 - Click "Download XLS file" button (top-right corner, 4th in a row with "➕ Add keywords")
