@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, Union
 from math import sqrt
-from lib.cache_store import get_cache_store
+from lib.aso_store import get_aso_store, ASONamespaces
 
 
 @dataclass
@@ -274,28 +274,29 @@ def calculate_keyword_difficulty(keyword: str, apps: List[Dict]) -> KeywordDiffi
 
 async def analyze_keyword_difficulty_from_appstore_apps(keyword: str, apps) -> KeywordDifficultyResult:
     """Analyze keyword difficulty from AppstoreApp objects with caching."""
-    # Get cache instance
-    cache = get_cache_store()
+    # Get store instance
+    store = get_aso_store()
     
-    # Check cache first
-    cached_result = await cache.get_keyword_difficulty(keyword)
-    if cached_result:
+    # Check store first
+    item = await store.aget(ASONamespaces.keyword_difficulty(), keyword.lower())
+    if item:
         # Convert cached data to KeywordDifficultyResult
+        cached_data = item.value
         return KeywordDifficultyResult(
-            keyword=cached_result.keyword,
+            keyword=cached_data["keyword"],
             title_matches=TitleMatchResult(
                 exact=0,  # Not stored individually
                 broad=0,
                 partial=0,
                 none=0,
-                score=cached_result.title_matches_score
+                score=cached_data["title_matches_score"]
             ),
-            competitors=cached_result.competitors,
-            competitors_score=cached_result.competitors_score,
-            installs_score=cached_result.installs_score,
-            rating_score=cached_result.rating_score,
-            age_score=cached_result.age_score,
-            score=cached_result.difficulty_score
+            competitors=cached_data["competitors"],
+            competitors_score=cached_data["competitors_score"],
+            installs_score=cached_data["installs_score"],
+            rating_score=cached_data["rating_score"],
+            age_score=cached_data["age_score"],
+            score=cached_data["difficulty_score"]
         )
     
     # Convert AppstoreApp objects to dict format expected by algorithm
@@ -319,15 +320,20 @@ async def analyze_keyword_difficulty_from_appstore_apps(keyword: str, apps) -> K
     # Calculate difficulty
     result = calculate_keyword_difficulty(keyword, app_dicts)
     
-    # Cache the result
-    await cache.set_keyword_difficulty(keyword, {
-        'score': result.score,
-        'title_matches': {'score': result.title_matches.score},
-        'competitors': result.competitors,
-        'competitors_score': result.competitors_score,
-        'installs_score': result.installs_score,
-        'rating_score': result.rating_score,
-        'age_score': result.age_score
-    })
+    # Cache the result in store
+    await store.aput(
+        ASONamespaces.keyword_difficulty(),
+        keyword.lower(),
+        {
+            "keyword": result.keyword,
+            "difficulty_score": result.score,
+            "title_matches_score": result.title_matches.score,
+            "competitors": result.competitors,
+            "competitors_score": result.competitors_score,
+            "installs_score": result.installs_score,
+            "rating_score": result.rating_score,
+            "age_score": result.age_score
+        }
+    )
     
     return result

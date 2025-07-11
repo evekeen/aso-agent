@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Union
 import aiohttp
 from pydantic import BaseModel
-from lib.cache_store import get_cache_store, CachedRevenue
+from lib.aso_store import get_aso_store, ASONamespaces
 
 
 class SensorTowerAppData(BaseModel):
@@ -188,24 +188,23 @@ async def get_apps_revenue(app_ids: List[str]) -> Dict[str, Union[AppRevenueResu
     results = {}
     missing_app_ids = []
     
-    # Get SQLite cache instance
-    db_cache = get_cache_store()
+    # Get ASO store instance
+    store = get_aso_store()
     
-    # Check SQLite cache first (bulk query)
-    cached_revenues = await db_cache.get_bulk_revenues(app_ids)
-    
+    # Check store for each app ID
     for app_id in app_ids:
-        if app_id in cached_revenues:
+        item = await store.aget(ASONamespaces.app_revenue(), app_id)
+        if item:
             # Convert cached data to AppRevenueResult
-            cached = cached_revenues[app_id]
+            cached_data = item.value
             results[app_id] = AppRevenueResult(
-                app_id=cached.app_id,
-                app_name=cached.app_name,
-                publisher=cached.publisher,
-                last_month_revenue_usd=cached.revenue_usd,
-                last_month_revenue_string=cached.revenue_string,
-                last_month_downloads=cached.downloads,
-                last_month_downloads_string=cached.downloads_string,
+                app_id=cached_data["app_id"],
+                app_name=cached_data["app_name"],
+                publisher=cached_data["publisher"],
+                last_month_revenue_usd=cached_data["revenue_usd"],
+                last_month_revenue_string=cached_data["revenue_string"],
+                last_month_downloads=cached_data["downloads"],
+                last_month_downloads_string=cached_data["downloads_string"],
                 bundle_id="",  # Not stored in cache
                 version="",    # Not stored in cache
                 rating=None,   # Not stored in cache
@@ -225,8 +224,20 @@ async def get_apps_revenue(app_ids: List[str]) -> Dict[str, Union[AppRevenueResu
                     if isinstance(result, Exception):
                         results[app_id] = str(result)
                     else:
-                        # Cache successful result in DB
-                        await db_cache.set_app_revenue(app_id, result)
+                        # Cache successful result in store
+                        await store.aput(
+                            ASONamespaces.app_revenue(),
+                            app_id,
+                            {
+                                "app_id": result.app_id,
+                                "app_name": result.app_name,
+                                "publisher": result.publisher,
+                                "revenue_usd": result.last_month_revenue_usd,
+                                "revenue_string": result.last_month_revenue_string,
+                                "downloads": result.last_month_downloads,
+                                "downloads_string": result.last_month_downloads_string
+                            }
+                        )
                         results[app_id] = result
                         
         except Exception as e:

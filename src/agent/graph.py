@@ -9,7 +9,7 @@ from lib.keywords import generate_keywords
 from lib.sensor_tower import get_apps_revenue
 from lib.appstore import search_app_store
 from lib.keyword_difficulty import analyze_keyword_difficulty_from_appstore_apps
-from lib.cache_store import get_cache_store
+from lib.aso_store import get_aso_store, ASONamespaces
 
 
 class Configuration(TypedDict):
@@ -79,13 +79,14 @@ async def search_apps_for_keywords(state: dict) -> dict:
     apps_data_by_keyword = {}
     failed_keywords = []
     
-    # Get cache instance
-    cache = get_cache_store()
+    # Get store instance
+    store = get_aso_store()
     
     # Search for apps using each keyword
     for keyword in unique_keywords:
-        # Check cache first
-        cached_app_ids = await cache.get_keyword_apps(keyword)
+        # Check store first
+        item = await store.aget(ASONamespaces.keyword_apps(), keyword.lower())
+        cached_app_ids = item.value["app_ids"] if item else []
         
         if cached_app_ids:
             print(f"Using cached apps for keyword: '{keyword}' ({len(cached_app_ids)} apps)")
@@ -110,7 +111,11 @@ async def search_apps_for_keywords(state: dict) -> dict:
                     apps_data_by_keyword[keyword] = apps
                     
                     # Cache the keyword-app associations
-                    await cache.set_keyword_apps(keyword, app_ids)
+                    await store.aput(
+                        ASONamespaces.keyword_apps(),
+                        keyword.lower(),
+                        {"app_ids": app_ids}
+                    )
                     
                     print(f"Found {len(app_ids)} apps for '{keyword}': {app_ids[:3]}{'...' if len(app_ids) > 3 else ''}")
                     
@@ -392,9 +397,9 @@ async def generate_final_report(state: dict) -> dict:
     total_market_size = sum(revenue_by_keyword.values())
     difficulty_analyses_completed = len(difficulty_by_keyword)
     
-    # Get cache statistics
-    cache = get_cache_store()
-    cache_stats = await cache.get_cache_stats()
+    # Get store statistics
+    store = get_aso_store()
+    store_stats = await store.get_stats()
     
     # Structure final report for agent consumption
     final_report = {
@@ -403,9 +408,10 @@ async def generate_final_report(state: dict) -> dict:
             "total_keywords_analyzed": total_keywords_analyzed,
             "difficulty_analyses_completed": difficulty_analyses_completed,
             "total_market_size_usd": total_market_size,
-            "cache_hits": {
-                "keywords": cache_stats.get('active_keywords', 0),
-                "revenues": cache_stats.get('active_revenues', 0)
+            "store_usage": {
+                "active_items": store_stats.get('active_items', 0),
+                "total_items": store_stats.get('total_items', 0),
+                "namespaces": store_stats.get('namespaces', 0)
             }
         },
         "app_ideas": app_analysis
@@ -417,7 +423,7 @@ async def generate_final_report(state: dict) -> dict:
     print(f"  • Keywords evaluated: {total_keywords_analyzed}")
     print(f"  • Difficulty analyses: {difficulty_analyses_completed}")
     print(f"  • Total market opportunity: ${total_market_size:,.2f}")
-    print(f"  • Cache efficiency: {cache_stats.get('active_keywords', 0)} keyword hits, {cache_stats.get('active_revenues', 0)} revenue hits")
+    print(f"  • Store efficiency: {store_stats.get('active_items', 0)} active items across {store_stats.get('namespaces', 0)} namespaces")
     
     # Print structured data for each app idea
     for idea, analysis in app_analysis.items():
