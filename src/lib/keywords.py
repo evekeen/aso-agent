@@ -5,9 +5,8 @@ from pydantic import BaseModel, Field
 
 class KeywordList(BaseModel):
     """List of ASO keywords"""
-    two_words: List[str] = Field(description="List of two-word keywords for App Store optimization")
-    three_words: List[str] = Field(description="List of long-tail three-word keywords for App Store optimization")
-    four_words: List[str] = Field(description="List of long-tail four-word keywords for App Store optimization")
+    two_word: List[str] = Field(description="List of two-word keywords for App Store optimization")
+    three_word: List[str] = Field(description="List of long-tail three-word keywords for App Store optimization")
 
 
 def generate_keywords(ideas: dict, keywords_len: int) -> List[str]:
@@ -31,16 +30,15 @@ def generate_keywords(ideas: dict, keywords_len: int) -> List[str]:
 
             Generate exactly {extended_keywords_len} long-tail keywords for the following mobile app idea: {idea}
 
-            - Use long-tail keyword phrases (2–4 words) that are specific and highly relevant.
+            - Use long-tail keyword phrases (1–3 words) that are specific and highly relevant.
             - Ensure each keyword reflects the app’s main functionality or user benefit (e.g., stress relief, time-saving, motivation).
             - Include user intent—what a user might search for when looking for this type of app.
             - Prioritize keywords that are competitive for Apple App Store (i.e., low difficulty, solid search volume).
             - Format the output as a numbered list.
             
             Make sure to generate:
-            - {extended_keywords_len/3} two-word keywords
-            - {extended_keywords_len/3} three-word keywords
-            - {extended_keywords_len/3} four-word keywords
+            - {extended_keywords_len/2} two-word keywords
+            - {extended_keywords_len/2} three-word keywords
 
             Example:
             App Idea: A meditation app for busy professionals  
@@ -48,14 +46,13 @@ def generate_keywords(ideas: dict, keywords_len: int) -> List[str]:
             1. guided meditation
             2. stress relief
             3. quick mindfulness sessions  
-            4. meditation for work stress  
-            5. short daily breathing exercises  
+            4. meditation for work
         """
         
         try:
             response = llm.invoke(prompt)
             
-            all_keywords = response.two_words + response.three_words + response.four_words
+            all_keywords = response.two_word + response.three_word
             
             if not all_keywords or len(all_keywords) < keywords_len:
                 raise ValueError(f"LLM returned invalid keywords for '{idea}': expected {keywords_len} keywords, got {len(all_keywords) if all_keywords else 0}")
