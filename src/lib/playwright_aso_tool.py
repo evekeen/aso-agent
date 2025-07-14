@@ -273,6 +273,15 @@ class PlaywrightASOTool:
         """Extract keyword difficulty and traffic metrics from the page."""
         try:
             await self.page.wait_for_selector('table', timeout=10000)
+            paginator = self.page.locator('.p-paginator-rpp-options').first
+            if not await paginator.is_visible():
+                print("❌ Paginator not found, cannot extract metrics")
+                return {}
+            await paginator.click()            
+            await self.page.wait_for_timeout(1000)
+            option_200 = self.page.locator('.p-dropdown-items-wrapper .p-dropdown-item:has-text("200")')
+            await option_200.click()            
+            
             await self.page.wait_for_timeout(2000)
             
             print("🔍 Extracting keyword metrics...")
