@@ -315,11 +315,23 @@ class PlaywrightASOTool:
                 
                 # Extract difficulty/complexity
                 difficulty_text = await cells.nth(complexity_idx).text_content()
-                difficulty = float(''.join(filter(str.isdigit, difficulty_text.split('.')[0])) or 0)
+                difficulty_text = difficulty_text.strip() if difficulty_text else "0"
+                # Handle float values like "45.2" or "100.0"
+                try:
+                    difficulty = float(difficulty_text)
+                except ValueError:
+                    # Fallback: extract numeric part if direct conversion fails
+                    difficulty = float(''.join(c for c in difficulty_text if c.isdigit() or c == '.') or "0")
                 
                 # Extract traffic/popularity
                 traffic_text = await cells.nth(traffic_idx).text_content()
-                traffic = float(''.join(filter(str.isdigit, traffic_text.split('.')[0])) or 0)
+                traffic_text = traffic_text.strip() if traffic_text else "0"
+                # Handle float values
+                try:
+                    traffic = float(traffic_text)
+                except ValueError:
+                    # Fallback: extract numeric part if direct conversion fails
+                    traffic = float(''.join(c for c in traffic_text if c.isdigit() or c == '.') or "0")
                 
                 keyword_metrics[keyword.strip()] = KeywordMetrics(
                     difficulty=difficulty,
