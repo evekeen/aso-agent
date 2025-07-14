@@ -164,3 +164,4 @@ uv.lock
 .DS_Store
 aso_cache.db
 test_signature.py
+aso_store.db
