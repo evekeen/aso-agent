@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Dict, List
 from dataclasses import dataclass
 from pydantic import BaseModel
-from browser_use import Agent, Browser, BrowserConfig, BrowserProfile, BrowserSession, Controller
+from playwright.async_api import Page
+from browser_use import ActionResult, Agent, BrowserSession, Controller
 from browser_use.llm import ChatOpenAI
 from dotenv import load_dotenv
 
@@ -32,13 +33,33 @@ class KeywordAnalysisResult(BaseModel):
     
     class Config:
         extra = "forbid"
+        
+
+controller = Controller()
+        
+@controller.registry.action("click_delete_all_keywords")
+def click_delete_all_keywords(page) -> ActionResult:
+    """Click the delete all keywords button in the ASO Mobile interface."""
+    page.locator('.aso-action-icon--trash').click()
+    return ActionResult(success=True, message="Clicked delete all keywords button")
+
+
+@controller.registry.action("expand_left_menu")
+def expand_left_menu(page) -> ActionResult:
+    """Expand the left menu in the ASO Mobile interface."""
+    chevron = page.locator('app-toggle-menu-button > .expand-menu')
+    if chevron.is_visible():
+        chevron.click()
+        return ActionResult(success=True, message="Expanded left menu")
+    else:
+        return ActionResult(success=False, message="Left menu already expanded or not found")
 
 class ASOBrowserTool:
     """Generic browser automation tool for ASO-related tasks."""
     
     def __init__(
         self,
-        model: str = "gpt-4.1",
+        model: str = "gpt-4.1-mini",
     ):
         self.model = model
         self.api_key = os.getenv('OPENAI_API_KEY')
@@ -59,14 +80,12 @@ class ASOBrowserTool:
             Dictionary mapping keywords to their metrics
         """
 
-        controller = Controller()
         browser_session = BrowserSession(
             headless=False,
             viewport={'width': 2400, 'height': 1280},
             window_size={'width': 2400, 'height': 1280},
             user_data_dir=Path('~/.config/browseruse/profiles/aso').expanduser(),
             stealth=False,
-            save_recording_path=Path('~/browseruse/recordings').expanduser(),
             keep_alive=False,
             allowed_domains=['app.asomobile.net', 'asomobile.net'],
         )
@@ -173,7 +192,8 @@ async def download_keyword_metrics(
                 •	It is assumed that you are already logged in. If not, lopgin with aso@ivkin.dev 123123123
 
             3. Menu state
-                •	Ensure the left menu is expanded. If there is a double chevron right icon (>>) at the top left, click it to expand the menu. If it's a double chevron left icon (<<), the menu is already expanded.
+                •	Expand the left menu in the ASO Mobile interface.
+                •	It is very important to export the left menu before proceeding.
             4. App Selection        
                 •	Check if the "Bedtime Fan: White noise baby" app is not already selected. If it's selected skip to step 4. The selected app name is between "asomobile"  and the "+ Application" button in the top left corner of the page.
                 •	Next button to the left of the "+ Application" button is the app selection dropdown
@@ -185,8 +205,7 @@ async def download_keyword_metrics(
 
             6. Delete All Keywords
                 - If there are no keywords, skip to step 6. The indicator ot that is the presence of the "+ Add keywords" button.
-                - Click delete all "Trash" icon button in the keyword table header on the rightmost column. The table is at the bottom of the page and it has columns "Keyword", "Traffic", etc.
-                - Make sure to use the top most trash button, so all keywords are deleted at once
+                - Click Delete all keywords button
                 - Click "Yes" button to confirm deletion
 
             7. Add Input Keywords
