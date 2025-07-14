@@ -5,10 +5,12 @@ from pydantic import BaseModel, Field
 
 class KeywordList(BaseModel):
     """List of ASO keywords"""
-    keywords: List[str] = Field(description="List of long-tail keywords for App Store optimization")
+    two_words: List[str] = Field(description="List of two-word keywords for App Store optimization")
+    three_words: List[str] = Field(description="List of long-tail three-word keywords for App Store optimization")
+    four_words: List[str] = Field(description="List of long-tail four-word keywords for App Store optimization")
 
 
-def generate_keywords(ideas: dict, keywords_len: int) -> list[str]:
+def generate_keywords(ideas: dict, keywords_len: int) -> List[str]:
     if not ideas:
         raise ValueError("No app ideas provided for keyword generation.")
     
@@ -21,41 +23,49 @@ def generate_keywords(ideas: dict, keywords_len: int) -> list[str]:
     
     keywords = {}
     failed_ideas = []
+    extended_keywords_len = keywords_len + 3  # Allow for some flexibility in keyword generation
     
     for idea in ideas:
         prompt = f"""
             You are an App Store SEO specialist helping developers and marketers optimize app visibility.
 
-            Generate exactly {keywords_len} long-tail keywords for the following mobile app idea: {idea}
+            Generate exactly {extended_keywords_len} long-tail keywords for the following mobile app idea: {idea}
 
             - Use long-tail keyword phrases (2–4 words) that are specific and highly relevant.
             - Ensure each keyword reflects the app’s main functionality or user benefit (e.g., stress relief, time-saving, motivation).
             - Include user intent—what a user might search for when looking for this type of app.
             - Prioritize keywords that are competitive for Apple App Store (i.e., low difficulty, solid search volume).
             - Format the output as a numbered list.
+            
+            Make sure to generate:
+            - {extended_keywords_len/3} two-word keywords
+            - {extended_keywords_len/3} three-word keywords
+            - {extended_keywords_len/3} four-word keywords
 
             Example:
             App Idea: A meditation app for busy professionals  
             Output:
-            1. guided meditation for stress  
-            2. quick mindfulness sessions  
-            3. meditation app for work stress  
-            4. short daily breathing exercises  
-            5. stress relief for professionals
+            1. guided meditation
+            2. stress relief
+            3. quick mindfulness sessions  
+            4. meditation for work stress  
+            5. short daily breathing exercises  
         """
         
         try:
             response = llm.invoke(prompt)
             
-            if not response.keywords or len(response.keywords) != keywords_len:
-                raise ValueError(f"LLM returned invalid keywords for '{idea}': expected {keywords_len} keywords, got {len(response.keywords) if response.keywords else 0}")
+            all_keywords = response.two_words + response.three_words + response.four_words
+            
+            if not all_keywords or len(all_keywords) < keywords_len:
+                raise ValueError(f"LLM returned invalid keywords for '{idea}': expected {keywords_len} keywords, got {len(all_keywords) if all_keywords else 0}")
 
-            for keyword in response.keywords:
+            for keyword in all_keywords:
                 if not keyword or not isinstance(keyword, str) or len(keyword.strip()) == 0:
                     raise ValueError(f"Invalid keyword generated for '{idea}': empty or non-string keyword")
 
-            keywords[idea] = response.keywords
-            print(f"Generated keywords for '{idea}': {response.keywords}")
+            keywords[idea] = all_keywords
+            print(f"Generated keywords for '{idea}': {all_keywords}")
             
         except Exception as e:
             failed_ideas.append(idea)
@@ -63,3 +73,22 @@ def generate_keywords(ideas: dict, keywords_len: int) -> list[str]:
     if len(failed_ideas) == len(ideas):
         raise RuntimeError(f"Failed to generate keywords for all {len(ideas)} app ideas. No keywords were generated.")
     return keywords
+
+
+if __name__ == "__main__":
+    import asyncio
+    
+    # Example usage
+    ideas = {
+        "A meditation app for busy professionals": None,
+        "A productivity app for remote teams": None,
+        "A fitness tracker for outdoor enthusiasts": None
+    }
+    
+    try:
+        keywords = generate_keywords(ideas, keywords_len=20)
+        print("Generated keywords:")
+        for idea, kws in keywords.items():
+            print(f"{idea}: {kws}")
+    except Exception as e:
+        print(f"Error generating keywords: {e}")
