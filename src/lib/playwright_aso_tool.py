@@ -229,37 +229,72 @@ class PlaywrightASOTool:
     async def extract_keyword_metrics(self) -> Dict[str, KeywordMetrics]:
         """Extract keyword difficulty and traffic metrics from the page."""
         try:
-            # Wait for keyword table to load
-            await self.page.wait_for_selector('.keyword-table, table', timeout=10000)
+            await self.page.wait_for_selector('table', timeout=10000)
             await self.page.wait_for_timeout(2000)
+            
+            print("🔍 Extracting keyword metrics...")
             
             keyword_metrics = {}
             
-            # Find all keyword rows
-            rows = self.page.locator('table tr, .keyword-row')
+            # Find all table rows
+            rows = self.page.locator('table tr')
             row_count = await rows.count()
             
-            for i in range(row_count):
+            if row_count < 2:
+                print("❌ No data rows found in table")
+                return keyword_metrics
+            
+            # Read header row to find column indices
+            header_row = rows.nth(0)
+            header_cells = header_row.locator('th, td')
+            header_count = await header_cells.count()
+            
+            keyword_idx = -1
+            complexity_idx = -1
+            traffic_idx = -1
+            
+            print("🔍 Reading header row...")
+            for j in range(header_count):
+                header_text = await header_cells.nth(j).text_content()
+                header_text = header_text.strip().lower() if header_text else ""
+                
+                if 'keyword' in header_text:
+                    keyword_idx = j
+                elif 'complexity' in header_text or 'difficulty' in header_text:
+                    complexity_idx = j
+                elif 'traffic' in header_text or 'popularity' in header_text:
+                    traffic_idx = j
+            
+            print(f"Column indices - Keyword: {keyword_idx}, Complexity: {complexity_idx}, Traffic: {traffic_idx}")
+            
+            if keyword_idx == -1 or complexity_idx == -1 or traffic_idx == -1:
+                print("❌ Could not find required columns in header")
+                return keyword_metrics
+            
+            # Process data rows (skip header at index 0)
+            print(f"Found {row_count - 1} data rows")
+            
+            for i in range(1, row_count):
                 row = rows.nth(i)
+                cells = row.locator('td')
+                cell_count = await cells.count()
+                
+                if cell_count <= max(keyword_idx, complexity_idx, traffic_idx):
+                    continue
                 
                 # Extract keyword name
-                keyword_cell = row.locator('td:first-child, .keyword-name').first
-                if not await keyword_cell.is_visible():
-                    continue
-                    
-                keyword = await keyword_cell.text_content()
+                keyword = await cells.nth(keyword_idx).text_content()
                 if not keyword or keyword.strip() == '':
                     continue
-                    
-                # Extract difficulty
-                difficulty_cell = row.locator('td:has-text("Difficulty"), .difficulty').first
-                difficulty_text = await difficulty_cell.text_content() if await difficulty_cell.is_visible() else "0"
-                difficulty = float(''.join(filter(str.isdigit, difficulty_text)) or 0)
+                keyword = keyword.strip()
+                
+                # Extract difficulty/complexity
+                difficulty_text = await cells.nth(complexity_idx).text_content()
+                difficulty = float(''.join(filter(str.isdigit, difficulty_text.split('.')[0])) or 0)
                 
                 # Extract traffic/popularity
-                traffic_cell = row.locator('td:has-text("Popularity"), td:has-text("Traffic"), .traffic, .popularity').first
-                traffic_text = await traffic_cell.text_content() if await traffic_cell.is_visible() else "0"
-                traffic = float(''.join(filter(str.isdigit, traffic_text)) or 0)
+                traffic_text = await cells.nth(traffic_idx).text_content()
+                traffic = float(''.join(filter(str.isdigit, traffic_text.split('.')[0])) or 0)
                 
                 keyword_metrics[keyword.strip()] = KeywordMetrics(
                     difficulty=difficulty,
