@@ -64,8 +64,17 @@ class ASOBrowserTool:
         self.model = model
         self.api_key = os.getenv('OPENAI_API_KEY')
         
+        # Load ASO credentials from environment
+        self.aso_email = os.getenv('ASO_EMAIL')
+        self.aso_password = os.getenv('ASO_PASSWORD')
+        self.aso_app_name = os.getenv('ASO_APP_NAME', 'Bedtime Fan: White noise baby')
+        
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY environment variable is required")
+        if not self.aso_email:
+            raise ValueError("ASO_EMAIL environment variable is required")
+        if not self.aso_password:
+            raise ValueError("ASO_PASSWORD environment variable is required")
                 
     
     async def execute_task(self, task: str, timeout: int = 360000) -> Dict[str, KeywordMetrics]:
@@ -161,6 +170,9 @@ async def download_keyword_metrics(
     Returns:
         Dictionary with keyword metrics (difficulty and traffic)
     """
+    # Create tool instance to get credentials
+    tool = ASOBrowserTool()
+    
     task = f"""
             ### Goal
             Extract keyword difficulty and traffic(popularity) metrics from the ASO Mobile platform using automated navigation and AI-driven keyword suggestions.
@@ -189,15 +201,15 @@ async def download_keyword_metrics(
                 •	Open ASO Mobile dashboard: https://app.asomobile.net/monitor/list-view
 
             2. Authentication
-                •	It is assumed that you are already logged in. If not, lopgin with aso@ivkin.dev 123123123
+                •	It is assumed that you are already logged in. If not, login with {tool.aso_email} {tool.aso_password}
 
             3. Menu state
                 •	Expand the left menu in the ASO Mobile interface.
                 •	It is very important to export the left menu before proceeding.
             4. App Selection        
-                •	Check if the "Bedtime Fan: White noise baby" app is not already selected. If it's selected skip to step 4. The selected app name is between "asomobile"  and the "+ Application" button in the top left corner of the page.
+                •	Check if the app from ASO_APP_NAME environment variable is not already selected. If it's selected skip to step 4. The selected app name is between "asomobile"  and the "+ Application" button in the top left corner of the page.
                 •	Next button to the left of the "+ Application" button is the app selection dropdown
-                •	Open the dropdown and select "Bedtime Fan: White nose baby" app
+                •	Open the dropdown and select the app from ASO_APP_NAME environment variable
 
             5. Access Keyword Monitor
                 - Navigate to "Keyword monitor" section in left sidebar
