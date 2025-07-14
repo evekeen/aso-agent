@@ -8,8 +8,6 @@ from dataclasses import dataclass
 from playwright.async_api import async_playwright, Page, BrowserContext
 from dotenv import load_dotenv
 
-load_dotenv()
-
 
 @dataclass
 class KeywordMetrics:
@@ -48,11 +46,27 @@ class PlaywrightASOTool:
         """Async context manager exit."""
         await self.close_browser()
         
-    async def start_browser(self):
+    async def start_browser(self, playwright_instance=None, browser_instance=None):
         """Start browser with configured settings and persistent profile."""
-        self.playwright = await async_playwright().start()
+        print("🔍 Starting Playwright browser...")
         
-        if self.use_browsercat:
+        if playwright_instance:
+            self.playwright = playwright_instance
+            print("🔍 Using provided Playwright instance")
+        else:
+            self.playwright = await async_playwright().start()
+            print("🔍 Playwright started")
+        
+        if browser_instance:
+            self.browser = browser_instance
+            print("🌐 Using provided browser instance")
+            
+            # Create context with viewport settings
+            self.context = await self.browser.new_context(
+                viewport={'width': 1280, 'height': 1280},
+                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            )
+        elif self.use_browsercat:
             # Connect to BrowserCat
             print("🌐 Connecting to BrowserCat...")
             browsercat_url = 'wss://api.browsercat.com/connect'
@@ -90,14 +104,18 @@ class PlaywrightASOTool:
         
         self.page = await self.context.new_page()
         
-    async def close_browser(self):
+    async def close_browser(self, close_shared_resources=False):
         """Close browser and cleanup."""
         if self.context:
             await self.context.close()
-        if hasattr(self, 'browser') and self.browser:
-            await self.browser.close()
-        if hasattr(self, 'playwright') and self.playwright:
-            await self.playwright.stop()
+        
+        # Only close browser and playwright if they're not shared instances
+        # or if explicitly requested
+        if close_shared_resources:
+            if hasattr(self, 'browser') and self.browser:
+                await self.browser.close()
+            if hasattr(self, 'playwright') and self.playwright:
+                await self.playwright.stop()
             
     async def login_if_needed(self):
         """Login to ASO Mobile if not already logged in."""
@@ -376,14 +394,27 @@ class PlaywrightASOTool:
 
 
 # Convenience function
-async def download_keyword_metrics_playwright(keywords: List[str], use_browsercat: bool = True) -> Dict[str, KeywordMetrics]:
+async def download_keyword_metrics_playwright(
+    keywords: List[str], 
+    use_browsercat: bool = True,
+    playwright_instance=None,
+    browser_instance=None
+) -> Dict[str, KeywordMetrics]:
     """Download keyword metrics using direct Playwright automation."""
-    async with PlaywrightASOTool(use_browsercat=use_browsercat) as tool:
+    tool = PlaywrightASOTool(use_browsercat=use_browsercat)
+    
+    try:
+        await tool.start_browser(playwright_instance, browser_instance)
         return await tool.download_keyword_metrics(keywords)
+    finally:
+        # Don't close shared resources
+        await tool.close_browser(close_shared_resources=False)
 
 
 # Example usage
 if __name__ == "__main__":
+    load_dotenv()
+    
     async def test_playwright_tool():
         keywords = ["sleep sounds", "white noise", "bedtime stories", "lullabies", "meditation music"]
         

@@ -8,7 +8,6 @@ from langgraph.types import Command
 from lib.keywords import generate_keywords
 from lib.sensor_tower import get_apps_revenue
 from lib.appstore import search_app_store
-from lib.keyword_difficulty import analyze_keyword_difficulty_from_appstore_apps
 from lib.aso_store import get_aso_store, ASONamespaces
 
 
@@ -29,6 +28,8 @@ class State(MessagesState):
     difficulty_by_keyword: dict[str, float]
     filtered_keywords: list[str]
     final_report: dict
+    playwright_instance: object = None
+    browser_instance: object = None
 
 
 def collect_app_ideas(state: dict) -> dict:
@@ -41,7 +42,6 @@ def generate_initial_keywords(state: dict) -> dict:
     if not ideas:
         raise ValueError("No app ideas provided for keyword generation.")
     
-    print(f"Processing {len(ideas)} app ideas for keyword generation...")
     initial_keywords = generate_keywords(ideas, keywords_len=20)
     if not initial_keywords:
         raise RuntimeError("No keywords were generated for the provided app ideas.")
@@ -279,45 +279,78 @@ def filter_keywords_by_market_size(state: dict) -> Command[Literal["analyze_keyw
 
 async def analyze_keyword_difficulty(state: dict) -> dict:
     """
-    LangGraph node to analyze keyword difficulty using the iTunes algorithm.
+    LangGraph node to analyze keyword difficulty using ASO Mobile metrics.
     
     This node:
-    1. Gets app data for each keyword from apps_data_by_keyword
-    2. Runs keyword difficulty analysis for each keyword
-    3. Returns difficulty scores by keyword
+    1. Gets filtered keywords from state
+    2. Fetches real difficulty and traffic data from ASO Mobile using Playwright
+    3. Returns difficulty and traffic scores by keyword
     """
-    apps_data_by_keyword = state.get("apps_data_by_keyword", {})
-    if not apps_data_by_keyword:
-        raise ValueError("No apps data found. Please run app search first.")
+    from lib.playwright_aso_tool import download_keyword_metrics_playwright
     
-    print(f"Analyzing keyword difficulty for {len(apps_data_by_keyword)} keywords...")
+    filtered_keywords = state.get("filtered_keywords", [])
+    if not filtered_keywords:
+        print("No keywords to analyze for difficulty")
+        return {
+            "difficulty_by_keyword": {},
+            "traffic_by_keyword": {}
+        }
+    
+    print(f"🔍 Fetching ASO metrics for {len(filtered_keywords)} keywords using Playwright...")
     
     difficulty_by_keyword = {}
+    traffic_by_keyword = {}
     failed_keywords = []
     
-    for keyword, apps in apps_data_by_keyword.items():
-        try:
-            if not apps:
-                print(f"No apps available for keyword '{keyword}', skipping difficulty analysis")
-                difficulty_by_keyword[keyword] = 1.0
-                continue
-            
-            print(f"Analyzing difficulty for keyword: '{keyword}' ({len(apps)} apps)")
-            
-            # Run difficulty analysis
-            result = await analyze_keyword_difficulty_from_appstore_apps(keyword, apps)
-            difficulty_by_keyword[keyword] = result.score
-            
-            # Log detailed results
-            difficulty_level = "Easy" if result.score <= 3 else "Medium" if result.score <= 6 else "Hard" if result.score <= 8 else "Very Hard"
-            print(f"  '{keyword}': {result.score}/10 ({difficulty_level})")
-            print(f"    Title matches: {result.title_matches.score:.1f}, Competitors: {result.competitors}")
-            print(f"    Installs: {result.installs_score:.1f}, Rating: {result.rating_score:.1f}, Age: {result.age_score:.1f}")
-            
-        except Exception as e:
-            failed_keywords.append(keyword)
-            print(f"Failed to analyze difficulty for keyword '{keyword}': {e}")
-            difficulty_by_keyword[keyword] = 5.0
+    try:
+        # Get browser instances from state
+        playwright_instance = state.get("playwright_instance")
+        browser_instance = state.get("browser_instance")
+        
+        # Fetch metrics for all keywords at once using Playwright
+        keyword_metrics = await download_keyword_metrics_playwright(
+            filtered_keywords, 
+            use_browsercat=True,  # Use BrowserCat for cloud execution
+            playwright_instance=playwright_instance,
+            browser_instance=browser_instance
+        )
+        
+        if not keyword_metrics:
+            print("⚠️ No metrics returned from ASO Mobile")
+            # Fallback to default values
+            for keyword in filtered_keywords:
+                difficulty_by_keyword[keyword] = 5.0  # Default medium difficulty (scale 0-10)
+                traffic_by_keyword[keyword] = 50.0    # Default medium traffic (scale 0-100)
+        else:
+            # Process the returned metrics
+            for keyword in filtered_keywords:
+                if keyword in keyword_metrics:
+                    metrics = keyword_metrics[keyword]
+                    # Convert ASO Mobile scale (0-100) to app difficulty scale (0-10)
+                    difficulty_by_keyword[keyword] = metrics.difficulty / 10.0
+                    traffic_by_keyword[keyword] = metrics.traffic
+                    
+                    # Log detailed results
+                    difficulty_level = "Easy" if metrics.difficulty <= 30 else "Medium" if metrics.difficulty <= 60 else "Hard" if metrics.difficulty <= 80 else "Very Hard"
+                    traffic_level = "Low" if metrics.traffic <= 30 else "Medium" if metrics.traffic <= 60 else "High" if metrics.traffic <= 80 else "Very High"
+                    
+                    print(f"  '{keyword}':")
+                    print(f"    Difficulty: {metrics.difficulty}/100 ({difficulty_level})")
+                    print(f"    Traffic: {metrics.traffic}/100 ({traffic_level})")
+                else:
+                    # Keyword not found in results
+                    failed_keywords.append(keyword)
+                    print(f"⚠️ No metrics found for keyword '{keyword}'")
+                    difficulty_by_keyword[keyword] = 5.0  # Default medium difficulty
+                    traffic_by_keyword[keyword] = 50.0    # Default medium traffic
+                    
+    except Exception as e:
+        print(f"❌ Error fetching ASO metrics: {e}")
+        print("Falling back to default values for all keywords")
+        # Fallback to default values for all keywords
+        for keyword in filtered_keywords:
+            difficulty_by_keyword[keyword] = 5.0  # Default medium difficulty
+            traffic_by_keyword[keyword] = 50.0    # Default medium traffic
     
     # Calculate statistics
     if difficulty_by_keyword:
@@ -334,8 +367,17 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
         
         if failed_keywords:
             print(f"  • Failed analyses: {len(failed_keywords)}")
+        
+        # Traffic statistics
+        if traffic_by_keyword:
+            avg_traffic = sum(traffic_by_keyword.values()) / len(traffic_by_keyword)
+            print(f"\n📊 Keyword Traffic Summary:")
+            print(f"  • Average traffic: {avg_traffic:.2f}/100")
     
-    return {"difficulty_by_keyword": difficulty_by_keyword}
+    return {
+        "difficulty_by_keyword": difficulty_by_keyword,
+        "traffic_by_keyword": traffic_by_keyword
+    }
 
 
 async def generate_final_report(state: dict) -> dict:
@@ -349,6 +391,7 @@ async def generate_final_report(state: dict) -> dict:
     ideas = state.get("ideas", [])
     revenue_by_keyword = state.get("revenue_by_keyword", {})
     difficulty_by_keyword = state.get("difficulty_by_keyword", {})
+    traffic_by_keyword = state.get("traffic_by_keyword", {})
     initial_keywords = state.get("initial_keywords", {})
     
     print(f"\n📊 Generating Final ASO Analysis Report for Agent Consumption...")
@@ -378,12 +421,12 @@ async def generate_final_report(state: dict) -> dict:
         keywords_data = {}
         for keyword in idea_keywords:
             market_size = revenue_by_keyword.get(keyword, 0)
-            difficulty_score = difficulty_by_keyword.get(keyword, 5.0)  # Default to medium difficulty
-            traffic_rating = 1.0  # Placeholder value as requested
+            difficulty_score = difficulty_by_keyword.get(keyword, 0.0)
+            traffic_score = traffic_by_keyword.get(keyword, 0.0)
             
             keywords_data[keyword] = {
                 "difficulty_rating": round(difficulty_score, 2),
-                "traffic_rating": traffic_rating,
+                "traffic_rating": traffic_score,
                 "market_size_usd": market_size
             }
         
@@ -466,3 +509,81 @@ graph = (
     .add_edge("analyze_keyword_difficulty", "generate_final_report")
     .compile(name="ASO Researcher")
 )
+
+
+async def initialize_browser_resources():
+    """Initialize Playwright and browser instances for the graph."""
+    from playwright.async_api import async_playwright
+    import os
+    
+    print("🚀 Initializing browser resources...")
+    
+    # Start Playwright
+    playwright_instance = await async_playwright().start()
+    print("✅ Playwright initialized")
+    
+    # Check if BrowserCat should be used
+    browsercat_api_key = os.getenv('BROWSER_CAT_API_KEY')
+    use_browsercat = bool(browsercat_api_key)
+    
+    browser_instance = None
+    if use_browsercat:
+        print("🌐 Connecting to BrowserCat...")
+        browsercat_url = 'wss://api.browsercat.com/connect'
+        browser_instance = await playwright_instance.chromium.connect(
+            browsercat_url,
+            headers={'Api-Key': browsercat_api_key}
+        )
+        print("✅ Connected to BrowserCat")
+    
+    return playwright_instance, browser_instance
+
+
+async def cleanup_browser_resources(playwright_instance, browser_instance):
+    """Cleanup browser resources after graph execution."""
+    print("🧹 Cleaning up browser resources...")
+    
+    if browser_instance:
+        await browser_instance.close()
+        print("✅ Browser closed")
+    
+    if playwright_instance:
+        await playwright_instance.stop()
+        print("✅ Playwright stopped")
+
+
+async def run_graph_with_browser(initial_state=None):
+    """Run the ASO graph with pre-initialized browser resources."""
+    playwright_instance, browser_instance = await initialize_browser_resources()
+    
+    try:
+        # Add browser instances to initial state
+        if initial_state is None:
+            initial_state = {}
+        
+        initial_state.update({
+            "playwright_instance": playwright_instance,
+            "browser_instance": browser_instance
+        })
+        
+        # Run the graph
+        result = await graph.ainvoke(initial_state)
+        return result
+        
+    finally:
+        # Always cleanup resources
+        await cleanup_browser_resources(playwright_instance, browser_instance)
+
+
+if __name__ == "__main__":
+    import asyncio
+    from dotenv import load_dotenv
+    
+    load_dotenv()  # Load environment variables from .env file
+    
+    # Run the graph with browser resources
+    result = asyncio.run(run_graph_with_browser())
+    
+    # Print final report
+    print("\n📑 Final ASO Analysis Report:")
+    print(result.get("final_report", {}))
