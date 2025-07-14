@@ -266,6 +266,64 @@ class ASOSQLiteStore(BaseStore):
             
             return stats
 
+    async def abatch(self, ops: List[Tuple[str, Tuple[str, ...], str, Any]]) -> List[Any]:
+        """
+        Execute multiple operations asynchronously in a single batch.
+        
+        Args:
+            ops: List of operations, each tuple contains:
+                - operation: "get" or "put" or "delete"
+                - namespace: namespace tuple
+                - key: item key
+                - value: item value (for put operations, None for get/delete)
+        
+        Returns:
+            List of results corresponding to each operation
+        """
+        await self._ensure_initialized()
+        
+        results = []
+        for op_type, namespace, key, value in ops:
+            if op_type == "get":
+                result = await self.aget(namespace, key)
+                results.append(result)
+            elif op_type == "put":
+                await self.aput(namespace, key, value)
+                results.append(None)
+            elif op_type == "delete":
+                await self.adelete(namespace, key)
+                results.append(None)
+            else:
+                raise ValueError(f"Unknown operation type: {op_type}")
+        
+        return results
+
+    def batch(self, ops: List[Tuple[str, Tuple[str, ...], str, Any]]) -> List[Any]:
+        """
+        Execute multiple operations synchronously in a single batch.
+        
+        Args:
+            ops: List of operations, each tuple contains:
+                - operation: "get" or "put" or "delete"  
+                - namespace: namespace tuple
+                - key: item key
+                - value: item value (for put operations, None for get/delete)
+        
+        Returns:
+            List of results corresponding to each operation
+        """
+        import asyncio
+        
+        # Create event loop if none exists (for sync context)
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Run async batch operation
+        return loop.run_until_complete(self.abatch(ops))
+
 
 # ASO-specific namespace helpers
 class ASONamespaces:
