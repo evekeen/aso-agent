@@ -21,19 +21,23 @@ class KeywordMetrics:
 class PlaywrightASOTool:
     """Direct Playwright automation tool for ASO Mobile tasks."""
     
-    def __init__(self):
+    def __init__(self, use_browsercat: bool = True):
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
+        self.use_browsercat = use_browsercat
         
         # Load credentials from environment variables
         self.aso_email = os.getenv('ASO_EMAIL')
         self.aso_password = os.getenv('ASO_PASSWORD')
         self.aso_app_name = os.getenv('ASO_APP_NAME', 'Bedtime Fan')
+        self.browsercat_api_key = os.getenv('BROWSER_CAT_API_KEY')
         
         if not self.aso_email:
             raise ValueError("ASO_EMAIL environment variable is required")
         if not self.aso_password:
             raise ValueError("ASO_PASSWORD environment variable is required")
+        if self.use_browsercat and not self.browsercat_api_key:
+            raise ValueError("BROWSER_CAT_API_KEY environment variable is required when use_browsercat=True")
         
     async def __aenter__(self):
         """Async context manager entry."""
@@ -46,24 +50,41 @@ class PlaywrightASOTool:
         
     async def start_browser(self):
         """Start browser with configured settings and persistent profile."""
-        playwright = await async_playwright().start()
+        self.playwright = await async_playwright().start()
         
-        # Create user data directory for persistent profile
-        user_data_dir = Path('~/.config/playwright/aso-profile').expanduser()
-        user_data_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Launch browser with persistent context
-        self.context = await playwright.chromium.launch_persistent_context(
-            user_data_dir=str(user_data_dir),
-            headless=False,
-            viewport={'width': 1280, 'height': 1280},
-            user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            args=[
-                '--no-sandbox',
-                '--disable-blink-features=AutomationControlled',
-                '--disable-web-security'
-            ]
-        )
+        if self.use_browsercat:
+            # Connect to BrowserCat
+            print("🌐 Connecting to BrowserCat...")
+            browsercat_url = 'wss://api.browsercat.com/connect'
+            self.browser = await self.playwright.chromium.connect(
+                browsercat_url,
+                headers={'Api-Key': self.browsercat_api_key}
+            )
+            print("🌐 Connected to BrowserCat")
+            
+            # Create context with viewport settings
+            self.context = await self.browser.new_context(
+                viewport={'width': 1280, 'height': 1280},
+                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            )
+        else:
+            # Use local browser with persistent profile
+            print("🖥️ Starting local browser...")
+            user_data_dir = Path('~/.config/playwright/aso-profile').expanduser()
+            user_data_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Launch browser with persistent context
+            self.context = await self.playwright.chromium.launch_persistent_context(
+                user_data_dir=str(user_data_dir),
+                headless=False,
+                viewport={'width': 1280, 'height': 1280},
+                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                args=[
+                    '--no-sandbox',
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-web-security'
+                ]
+            )
         
         print("🔍 Opening new page...")
         
@@ -73,6 +94,10 @@ class PlaywrightASOTool:
         """Close browser and cleanup."""
         if self.context:
             await self.context.close()
+        if hasattr(self, 'browser') and self.browser:
+            await self.browser.close()
+        if hasattr(self, 'playwright') and self.playwright:
+            await self.playwright.stop()
             
     async def login_if_needed(self):
         """Login to ASO Mobile if not already logged in."""
@@ -156,7 +181,7 @@ class PlaywrightASOTool:
             print("🔍 Selecting app from dropdown...")
             
             # Select the app
-            app_option = self.page.get_by_text(self.aso_app_name, exact=False)
+            app_option = self.page.locator(f'.app-name.option:has-text("{self.aso_app_name}")')
             await app_option.click()
             await self.page.wait_for_timeout(2000)
             
@@ -339,9 +364,9 @@ class PlaywrightASOTool:
 
 
 # Convenience function
-async def download_keyword_metrics_playwright(keywords: List[str]) -> Dict[str, KeywordMetrics]:
+async def download_keyword_metrics_playwright(keywords: List[str], use_browsercat: bool = True) -> Dict[str, KeywordMetrics]:
     """Download keyword metrics using direct Playwright automation."""
-    async with PlaywrightASOTool() as tool:
+    async with PlaywrightASOTool(use_browsercat=use_browsercat) as tool:
         return await tool.download_keyword_metrics(keywords)
 
 
