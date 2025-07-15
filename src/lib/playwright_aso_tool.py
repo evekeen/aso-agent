@@ -272,7 +272,6 @@ class PlaywrightASOTool:
     async def navigate_to_keyword_monitor(self):
         """Navigate to keyword monitor page with timeout and retry."""
         max_retries = 2
-        goto_timeout = 45
         
         for attempt in range(max_retries + 1):
             try:
