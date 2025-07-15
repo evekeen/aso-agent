@@ -47,8 +47,8 @@ class PlaywrightASOTool:
             print("🌐 Connecting to BrowserCat...")
             browsercat_url = 'wss://api.browsercat.com/connect'
             
-            max_retries = 1
-            timeout_seconds = 5
+            max_retries = 2
+            timeout_seconds = 30
             
             for attempt in range(max_retries + 1):
                 try:
@@ -70,7 +70,7 @@ class PlaywrightASOTool:
                     print(f"⏰ BrowserCat connection timeout after {timeout_seconds}s")
                     if attempt < max_retries:
                         print("🔄 Retrying connection...")
-                        await asyncio.sleep(2)  # Wait 2 seconds before retry
+                        await asyncio.sleep(5)
                     else:
                         raise Exception(f"Failed to connect to BrowserCat after {max_retries + 1} attempts (timeout)")
                         
@@ -78,7 +78,7 @@ class PlaywrightASOTool:
                     print(f"❌ BrowserCat connection failed: {e}")
                     if attempt < max_retries:
                         print("🔄 Retrying connection...")
-                        await asyncio.sleep(2)  # Wait 2 seconds before retry
+                        await asyncio.sleep(5)
                     else:
                         raise Exception(f"Failed to connect to BrowserCat after {max_retries + 1} attempts: {e}")
             
@@ -265,7 +265,7 @@ class PlaywrightASOTool:
     async def extract_keyword_metrics(self) -> Dict[str, KeywordMetrics]:
         """Extract keyword difficulty and traffic metrics from the page."""
         try:
-            await self.page.wait_for_selector('table', timeout=10000)
+            await self.page.wait_for_selector('table', timeout=30000)
             paginator = self.page.locator('.p-paginator-rpp-options').first
             if not await paginator.is_visible():
                 print("❌ Paginator not found, cannot extract metrics")
