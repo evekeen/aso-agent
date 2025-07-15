@@ -277,17 +277,14 @@ def filter_keywords_by_market_size(state: dict) -> Command[Literal["analyze_keyw
 
 async def analyze_keyword_difficulty(state: dict) -> dict:
     """
-    LangGraph node to analyze keyword difficulty using ASO Mobile metrics.
+    LangGraph node to analyze keyword difficulty using ASO Mobile metrics via microservice.
     
     This node:
     1. Gets filtered keywords from state
-    2. Fetches real difficulty and traffic data from ASO Mobile using Playwright
+    2. Fetches real difficulty and traffic data from ASO Mobile using microservice
     3. Returns difficulty and traffic scores by keyword
     """
-    import asyncio
-    from concurrent.futures import ThreadPoolExecutor
-    from lib.playwright_aso_tool import download_keyword_metrics_playwright
-    import nest_asyncio
+    from lib.aso_service_client import analyze_keywords_via_service
     
     filtered_keywords = state.get("filtered_keywords", [])
     if not filtered_keywords:
@@ -297,44 +294,18 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
             "traffic_by_keyword": {}
         }
     
-    print(f"🔍 Fetching ASO metrics for {len(filtered_keywords)} keywords using Playwright...")
+    print(f"🔍 Fetching ASO metrics for {len(filtered_keywords)} keywords using microservice...")
     
     difficulty_by_keyword = {}
     traffic_by_keyword = {}
     failed_keywords = []
     
-    def run_playwright_sync():
-        """Run Playwright in a separate thread to avoid event loop conflicts."""
-        import asyncio
-        import nest_asyncio
-        
-        # Allow nested event loops
-        nest_asyncio.apply()
-        
-        # Create a new event loop for this thread
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        try:
-            return loop.run_until_complete(download_keyword_metrics_playwright(
-                filtered_keywords, 
-                use_browsercat=True            
-            ))
-        finally:
-            loop.close()
-    
     try:
-        loop = asyncio.get_event_loop()
-        
-        # Run Playwright in a separate thread with its own event loop
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            keyword_metrics = await asyncio.wait_for(
-                loop.run_in_executor(executor, run_playwright_sync),
-                timeout=300 # 5 minutes
-            )
+        # Call the microservice
+        keyword_metrics = await analyze_keywords_via_service(filtered_keywords)
         
         if not keyword_metrics:
-            print("⚠️ No metrics returned from ASO Mobile")
+            print("⚠️ No metrics returned from ASO service")
         else:
             # Process the returned metrics
             for keyword in filtered_keywords:
@@ -354,6 +325,7 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
                 else:
                     failed_keywords.append(keyword)
                     print(f"⚠️ No metrics found for keyword '{keyword}'")
+                    
     except Exception as e:
         print(f"❌ Error fetching ASO metrics: {e}")
         raise e
