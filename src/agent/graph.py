@@ -284,6 +284,8 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
     2. Fetches real difficulty and traffic data from ASO Mobile using Playwright
     3. Returns difficulty and traffic scores by keyword
     """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
     from lib.playwright_aso_tool import download_keyword_metrics_playwright
     
     filtered_keywords = state.get("filtered_keywords", [])
@@ -300,25 +302,33 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
     traffic_by_keyword = {}
     failed_keywords = []
     
-    try:
-        keyword_metrics = await download_keyword_metrics_playwright(
+    def run_playwright_sync():
+        """Run Playwright in a separate thread to avoid event loop conflicts."""
+        import asyncio
+        return asyncio.run(download_keyword_metrics_playwright(
             filtered_keywords, 
             use_browsercat=True            
-        )
+        ))
+    
+    try:
+        loop = asyncio.get_event_loop()
+        
+        # Run Playwright in a separate thread with its own event loop
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            keyword_metrics = await asyncio.wait_for(
+                loop.run_in_executor(executor, run_playwright_sync),
+                timeout=180
+            )
         
         if not keyword_metrics:
             print("⚠️ No metrics returned from ASO Mobile")
-            # Fallback to default values
-            for keyword in filtered_keywords:
-                difficulty_by_keyword[keyword] = 5.0  # Default medium difficulty (scale 0-10)
-                traffic_by_keyword[keyword] = 50.0    # Default medium traffic (scale 0-100)
         else:
             # Process the returned metrics
             for keyword in filtered_keywords:
                 if keyword in keyword_metrics:
                     metrics = keyword_metrics[keyword]
-                    # Convert ASO Mobile scale (0-100) to app difficulty scale (0-10)
-                    difficulty_by_keyword[keyword] = metrics.difficulty / 10.0
+
+                    difficulty_by_keyword[keyword] = metrics.difficulty
                     traffic_by_keyword[keyword] = metrics.traffic
                     
                     # Log detailed results
@@ -329,19 +339,11 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
                     print(f"    Difficulty: {metrics.difficulty}/100 ({difficulty_level})")
                     print(f"    Traffic: {metrics.traffic}/100 ({traffic_level})")
                 else:
-                    # Keyword not found in results
                     failed_keywords.append(keyword)
                     print(f"⚠️ No metrics found for keyword '{keyword}'")
-                    difficulty_by_keyword[keyword] = 5.0  # Default medium difficulty
-                    traffic_by_keyword[keyword] = 50.0    # Default medium traffic
-                    
     except Exception as e:
         print(f"❌ Error fetching ASO metrics: {e}")
-        print("Falling back to default values for all keywords")
-        # Fallback to default values for all keywords
-        for keyword in filtered_keywords:
-            difficulty_by_keyword[keyword] = 5.0  # Default medium difficulty
-            traffic_by_keyword[keyword] = 50.0    # Default medium traffic
+        raise e
     
     # Calculate statistics
     if difficulty_by_keyword:

@@ -29,6 +29,7 @@ class PlaywrightASOTool:
         self.aso_password = os.getenv('ASO_PASSWORD')
         self.aso_app_name = os.getenv('ASO_APP_NAME', 'Bedtime Fan')
         self.browsercat_api_key = os.getenv('BROWSER_CAT_API_KEY')
+        self.browser: Optional[async_playwright.Browser] = None
         
         if not self.aso_email:
             raise ValueError("ASO_EMAIL environment variable is required")
@@ -42,14 +43,44 @@ class PlaywrightASOTool:
         """Start browser with configured settings and persistent profile."""
         print("🔍 Starting Playwright browser...")
         if self.use_browsercat:
-            # Connect to BrowserCat
+            # Connect to BrowserCat with timeout and retry
             print("🌐 Connecting to BrowserCat...")
             browsercat_url = 'wss://api.browsercat.com/connect'
-            self.browser = await playwright.chromium.connect(
-                browsercat_url,
-                headers={'Api-Key': self.browsercat_api_key}
-            )
-            print("🌐 Connected to BrowserCat")
+            
+            max_retries = 1
+            timeout_seconds = 5
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    print(f"🌐 Connection attempt {attempt + 1}/{max_retries + 1}...")
+                    
+                    # Use asyncio.wait_for to timeout the connection
+                    self.browser = await asyncio.wait_for(
+                        playwright.chromium.connect(
+                            browsercat_url,
+                            headers={'Api-Key': self.browsercat_api_key},
+                            timeout=timeout_seconds * 1000  # Playwright timeout in milliseconds
+                        ),
+                        timeout=timeout_seconds  # asyncio timeout in seconds
+                    )
+                    print("🌐 Connected to BrowserCat")
+                    break
+                    
+                except asyncio.TimeoutError:
+                    print(f"⏰ BrowserCat connection timeout after {timeout_seconds}s")
+                    if attempt < max_retries:
+                        print("🔄 Retrying connection...")
+                        await asyncio.sleep(2)  # Wait 2 seconds before retry
+                    else:
+                        raise Exception(f"Failed to connect to BrowserCat after {max_retries + 1} attempts (timeout)")
+                        
+                except Exception as e:
+                    print(f"❌ BrowserCat connection failed: {e}")
+                    if attempt < max_retries:
+                        print("🔄 Retrying connection...")
+                        await asyncio.sleep(2)  # Wait 2 seconds before retry
+                    else:
+                        raise Exception(f"Failed to connect to BrowserCat after {max_retries + 1} attempts: {e}")
             
             # Create context with viewport settings
             self.context = await self.browser.new_context(
@@ -336,7 +367,7 @@ class PlaywrightASOTool:
             
     async def download_keyword_metrics(self, keywords: List[str]) -> Dict[str, KeywordMetrics]:
         async with async_playwright() as pw:
-            self.start_browser(pw)
+            await self.start_browser(pw)
             """Complete workflow to download keyword metrics."""
             try:
                 # 1. Login if needed
