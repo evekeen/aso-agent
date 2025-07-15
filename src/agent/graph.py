@@ -28,8 +28,6 @@ class State(MessagesState):
     difficulty_by_keyword: dict[str, float]
     filtered_keywords: list[str]
     final_report: dict
-    playwright_instance: object = None
-    browser_instance: object = None
 
 
 def collect_app_ideas(state: dict) -> dict:
@@ -303,16 +301,9 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
     failed_keywords = []
     
     try:
-        # Get browser instances from state
-        playwright_instance = state.get("playwright_instance")
-        browser_instance = state.get("browser_instance")
-        
-        # Fetch metrics for all keywords at once using Playwright
         keyword_metrics = await download_keyword_metrics_playwright(
             filtered_keywords, 
-            use_browsercat=True,  # Use BrowserCat for cloud execution
-            playwright_instance=playwright_instance,
-            browser_instance=browser_instance
+            use_browsercat=True            
         )
         
         if not keyword_metrics:
@@ -509,81 +500,3 @@ graph = (
     .add_edge("analyze_keyword_difficulty", "generate_final_report")
     .compile(name="ASO Researcher")
 )
-
-
-async def initialize_browser_resources():
-    """Initialize Playwright and browser instances for the graph."""
-    from playwright.async_api import async_playwright
-    import os
-    
-    print("🚀 Initializing browser resources...")
-    
-    # Start Playwright
-    playwright_instance = await async_playwright().start()
-    print("✅ Playwright initialized")
-    
-    # Check if BrowserCat should be used
-    browsercat_api_key = os.getenv('BROWSER_CAT_API_KEY')
-    use_browsercat = bool(browsercat_api_key)
-    
-    browser_instance = None
-    if use_browsercat:
-        print("🌐 Connecting to BrowserCat...")
-        browsercat_url = 'wss://api.browsercat.com/connect'
-        browser_instance = await playwright_instance.chromium.connect(
-            browsercat_url,
-            headers={'Api-Key': browsercat_api_key}
-        )
-        print("✅ Connected to BrowserCat")
-    
-    return playwright_instance, browser_instance
-
-
-async def cleanup_browser_resources(playwright_instance, browser_instance):
-    """Cleanup browser resources after graph execution."""
-    print("🧹 Cleaning up browser resources...")
-    
-    if browser_instance:
-        await browser_instance.close()
-        print("✅ Browser closed")
-    
-    if playwright_instance:
-        await playwright_instance.stop()
-        print("✅ Playwright stopped")
-
-
-async def run_graph_with_browser(initial_state=None):
-    """Run the ASO graph with pre-initialized browser resources."""
-    playwright_instance, browser_instance = await initialize_browser_resources()
-    
-    try:
-        # Add browser instances to initial state
-        if initial_state is None:
-            initial_state = {}
-        
-        initial_state.update({
-            "playwright_instance": playwright_instance,
-            "browser_instance": browser_instance
-        })
-        
-        # Run the graph
-        result = await graph.ainvoke(initial_state)
-        return result
-        
-    finally:
-        # Always cleanup resources
-        await cleanup_browser_resources(playwright_instance, browser_instance)
-
-
-if __name__ == "__main__":
-    import asyncio
-    from dotenv import load_dotenv
-    
-    load_dotenv()  # Load environment variables from .env file
-    
-    # Run the graph with browser resources
-    result = asyncio.run(run_graph_with_browser())
-    
-    # Print final report
-    print("\n📑 Final ASO Analysis Report:")
-    print(result.get("final_report", {}))

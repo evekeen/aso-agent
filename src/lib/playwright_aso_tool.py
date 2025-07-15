@@ -36,41 +36,16 @@ class PlaywrightASOTool:
             raise ValueError("ASO_PASSWORD environment variable is required")
         if self.use_browsercat and not self.browsercat_api_key:
             raise ValueError("BROWSER_CAT_API_KEY environment variable is required when use_browsercat=True")
+    
         
-    async def __aenter__(self):
-        """Async context manager entry."""
-        await self.start_browser()
-        return self
-        
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit."""
-        await self.close_browser()
-        
-    async def start_browser(self, playwright_instance=None, browser_instance=None):
+    async def start_browser(self, playwright: async_playwright):
         """Start browser with configured settings and persistent profile."""
         print("🔍 Starting Playwright browser...")
-        
-        if playwright_instance:
-            self.playwright = playwright_instance
-            print("🔍 Using provided Playwright instance")
-        else:
-            self.playwright = await async_playwright().start()
-            print("🔍 Playwright started")
-        
-        if browser_instance:
-            self.browser = browser_instance
-            print("🌐 Using provided browser instance")
-            
-            # Create context with viewport settings
-            self.context = await self.browser.new_context(
-                viewport={'width': 1280, 'height': 1280},
-                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            )
-        elif self.use_browsercat:
+        if self.use_browsercat:
             # Connect to BrowserCat
             print("🌐 Connecting to BrowserCat...")
             browsercat_url = 'wss://api.browsercat.com/connect'
-            self.browser = await self.playwright.chromium.connect(
+            self.browser = await playwright.chromium.connect(
                 browsercat_url,
                 headers={'Api-Key': self.browsercat_api_key}
             )
@@ -88,7 +63,7 @@ class PlaywrightASOTool:
             user_data_dir.mkdir(parents=True, exist_ok=True)
             
             # Launch browser with persistent context
-            self.context = await self.playwright.chromium.launch_persistent_context(
+            self.context = await playwright.chromium.launch_persistent_context(
                 user_data_dir=str(user_data_dir),
                 headless=False,
                 viewport={'width': 1280, 'height': 1280},
@@ -103,19 +78,6 @@ class PlaywrightASOTool:
         print("🔍 Opening new page...")
         
         self.page = await self.context.new_page()
-        
-    async def close_browser(self, close_shared_resources=False):
-        """Close browser and cleanup."""
-        if self.context:
-            await self.context.close()
-        
-        # Only close browser and playwright if they're not shared instances
-        # or if explicitly requested
-        if close_shared_resources:
-            if hasattr(self, 'browser') and self.browser:
-                await self.browser.close()
-            if hasattr(self, 'playwright') and self.playwright:
-                await self.playwright.stop()
             
     async def login_if_needed(self):
         """Login to ASO Mobile if not already logged in."""
@@ -373,51 +335,49 @@ class PlaywrightASOTool:
             return {}
             
     async def download_keyword_metrics(self, keywords: List[str]) -> Dict[str, KeywordMetrics]:
-        """Complete workflow to download keyword metrics."""
-        try:
-            # 1. Login if needed
-            await self.login_if_needed()
-            
-            # 2. Expand menu
-            await self.expand_left_menu()
-            
-            # 3. Select app
-            await self.select_app()
-            
-            # 4. Navigate to keyword monitor
-            await self.navigate_to_keyword_monitor()
-            
-            # 5. Delete existing keywords
-            await self.delete_all_keywords()
-            await self.delete_all_keywords()
-            
-            # 6. Add new keywords
-            await self.add_keywords(keywords)
-            
-            # 7. Extract metrics
-            return await self.extract_keyword_metrics()
-            
-        except Exception as e:
-            print(f"❌ Workflow failed: {e}")
-            return {}
+        async with async_playwright() as pw:
+            self.start_browser(pw)
+            """Complete workflow to download keyword metrics."""
+            try:
+                # 1. Login if needed
+                await self.login_if_needed()
+                
+                # 2. Expand menu
+                await self.expand_left_menu()
+                
+                # 3. Select app
+                await self.select_app()
+                
+                # 4. Navigate to keyword monitor
+                await self.navigate_to_keyword_monitor()
+                
+                # 5. Delete existing keywords
+                await self.delete_all_keywords()
+                await self.delete_all_keywords()
+                
+                # 6. Add new keywords
+                await self.add_keywords(keywords)
+                
+                # 7. Extract metrics
+                return await self.extract_keyword_metrics()
+                
+            except Exception as e:
+                print(f"❌ Workflow failed: {e}")
+                return {}
+            finally:
+                if self.context:
+                    await self.context.close()
+                if self.browser:
+                    await self.browser.close()
 
 
 # Convenience function
 async def download_keyword_metrics_playwright(
     keywords: List[str], 
-    use_browsercat: bool = True,
-    playwright_instance=None,
-    browser_instance=None
+    use_browsercat: bool = True
 ) -> Dict[str, KeywordMetrics]:
     """Download keyword metrics using direct Playwright automation."""
-    tool = PlaywrightASOTool(use_browsercat=use_browsercat)
-    
-    try:
-        await tool.start_browser(playwright_instance, browser_instance)
-        return await tool.download_keyword_metrics(keywords)
-    finally:
-        # Don't close shared resources
-        await tool.close_browser(close_shared_resources=False)
+    return await PlaywrightASOTool(use_browsercat=use_browsercat).download_keyword_metrics(keywords)
 
 
 # Example usage
