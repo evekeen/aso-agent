@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from playwright.async_api import async_playwright, Page, BrowserContext
 from dotenv import load_dotenv
 
+import nest_asyncio
+nest_asyncio.apply()
+
 
 @dataclass
 class KeywordMetrics:

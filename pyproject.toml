@@ -16,6 +16,7 @@ dependencies = [
     "aiosqlite>=0.20.0",
     "browser-use>=0.5.4",
     "langchain-openai>=0.3.27",
+    "nest-asyncio>=1.6.0",
 ]
 
 

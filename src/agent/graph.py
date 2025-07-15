@@ -287,6 +287,7 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
     from lib.playwright_aso_tool import download_keyword_metrics_playwright
+    import nest_asyncio
     
     filtered_keywords = state.get("filtered_keywords", [])
     if not filtered_keywords:
@@ -305,10 +306,22 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
     def run_playwright_sync():
         """Run Playwright in a separate thread to avoid event loop conflicts."""
         import asyncio
-        return asyncio.run(download_keyword_metrics_playwright(
-            filtered_keywords, 
-            use_browsercat=True            
-        ))
+        import nest_asyncio
+        
+        # Allow nested event loops
+        nest_asyncio.apply()
+        
+        # Create a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            return loop.run_until_complete(download_keyword_metrics_playwright(
+                filtered_keywords, 
+                use_browsercat=True            
+            ))
+        finally:
+            loop.close()
     
     try:
         loop = asyncio.get_event_loop()
