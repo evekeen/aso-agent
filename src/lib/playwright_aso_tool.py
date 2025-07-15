@@ -18,6 +18,7 @@ class KeywordMetrics:
     difficulty: float
     traffic: float
 
+goto_timeout = 10
 
 class PlaywrightASOTool:
     """Direct Playwright automation tool for ASO Mobile tasks."""
@@ -111,13 +112,75 @@ class PlaywrightASOTool:
         
         print("🔍 Opening new page...")
         
-        self.page = await self.context.new_page()
+        # Create new page with timeout and retry
+        max_retries = 2
+        page_timeout = 30
+        
+        for attempt in range(max_retries + 1):
+            try:
+                print(f"🔍 Page creation attempt {attempt + 1}/{max_retries + 1}...")
+                
+                self.page = await asyncio.wait_for(
+                    self.context.new_page(),
+                    timeout=page_timeout
+                )
+                print("✅ Page created successfully")
+                break
+                
+            except asyncio.TimeoutError:
+                print(f"⏰ Page creation timeout after {page_timeout}s")
+                if attempt < max_retries:
+                    print("🔄 Retrying page creation...")
+                    await asyncio.sleep(3)
+                else:
+                    raise Exception(f"Failed to create page after {max_retries + 1} attempts (timeout)")
+                    
+            except Exception as e:
+                print(f"❌ Page creation failed: {e}")
+                if attempt < max_retries:
+                    print("🔄 Retrying page creation...")
+                    await asyncio.sleep(3)
+                else:
+                    raise Exception(f"Failed to create page after {max_retries + 1} attempts: {e}")
             
     async def login_if_needed(self):
         """Login to ASO Mobile if not already logged in."""
-        await self.page.goto("https://app.asomobile.net/monitor/list-view")
+        
+        # Navigate to login page with timeout and retry
+        max_retries = 2
+        
+        for attempt in range(max_retries + 1):
+            try:
+                print(f"🔍 Navigation attempt {attempt + 1}/{max_retries + 1}...")
+                
+                await asyncio.wait_for(
+                    self.page.goto("https://app.asomobile.net/monitor/list-view"),
+                    timeout=goto_timeout
+                )
+                print("✅ Navigation successful")
+                break
+                
+            except asyncio.TimeoutError:
+                print(f"⏰ Navigation timeout after {goto_timeout}s")
+                if attempt < max_retries:
+                    print("🔄 Retrying navigation...")
+                    await asyncio.sleep(5)
+                else:
+                    raise Exception(f"Failed to navigate after {max_retries + 1} attempts (timeout)")
+                    
+            except Exception as e:
+                print(f"❌ Navigation failed: {e}")
+                if attempt < max_retries:
+                    print("🔄 Retrying navigation...")
+                    await asyncio.sleep(5)
+                else:
+                    raise Exception(f"Failed to navigate after {max_retries + 1} attempts: {e}")
+        
         print("🔍 Waiting for page to load...")
-        await self.page.wait_for_load_state('domcontentloaded')
+        await asyncio.wait_for(
+            self.page.wait_for_load_state('domcontentloaded'),
+            timeout=30
+        )
         
         print("🔍 Checking login status...")
         
@@ -206,9 +269,42 @@ class PlaywrightASOTool:
             print(f"❌ Failed to select app: {e}")
             return False
             
-    async def navigate_to_keyword_monitor(self):        
-        await self.page.goto("https://app.asomobile.net/monitor/list-view")
-        await self.page.wait_for_load_state('domcontentloaded')
+    async def navigate_to_keyword_monitor(self):
+        """Navigate to keyword monitor page with timeout and retry."""
+        max_retries = 2
+        goto_timeout = 45
+        
+        for attempt in range(max_retries + 1):
+            try:
+                print(f"🔍 Keyword monitor navigation attempt {attempt + 1}/{max_retries + 1}...")
+                
+                await asyncio.wait_for(
+                    self.page.goto("https://app.asomobile.net/monitor/list-view"),
+                    timeout=goto_timeout
+                )
+                print("✅ Keyword monitor navigation successful")
+                break
+                
+            except asyncio.TimeoutError:
+                print(f"⏰ Keyword monitor navigation timeout after {goto_timeout}s")
+                if attempt < max_retries:
+                    print("🔄 Retrying keyword monitor navigation...")
+                    await asyncio.sleep(5)
+                else:
+                    raise Exception(f"Failed to navigate to keyword monitor after {max_retries + 1} attempts (timeout)")
+                    
+            except Exception as e:
+                print(f"❌ Keyword monitor navigation failed: {e}")
+                if attempt < max_retries:
+                    print("🔄 Retrying keyword monitor navigation...")
+                    await asyncio.sleep(5)
+                else:
+                    raise Exception(f"Failed to navigate to keyword monitor after {max_retries + 1} attempts: {e}")
+        
+        await asyncio.wait_for(
+            self.page.wait_for_load_state('domcontentloaded'),
+            timeout=30
+        )
         await self.page.wait_for_timeout(4000)
             
     async def delete_all_keywords(self):

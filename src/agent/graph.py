@@ -330,7 +330,7 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
         with ThreadPoolExecutor(max_workers=1) as executor:
             keyword_metrics = await asyncio.wait_for(
                 loop.run_in_executor(executor, run_playwright_sync),
-                timeout=180
+                timeout=300 # 5 minutes
             )
         
         if not keyword_metrics:
