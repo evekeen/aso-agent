@@ -318,8 +318,11 @@ class PlaywrightASOTask:
                 print("❌ Paginator not found, cannot extract metrics")
                 return {}
             await paginator.click()            
-            await self.page.wait_for_timeout(1000)
-            option_200 = self.page.locator('.p-dropdown-items-wrapper .p-dropdown-item:has-text("200")')
+            await self.page.wait_for_timeout(2000)
+            
+            option_200_selector = '.p-dropdown-items-wrapper .p-dropdown-item:has-text("200")'
+            await self.page.wait_for_selector(option_200_selector, timeout=keyword_timeout)            
+            option_200 = self.page.locator(option_200_selector)
             await option_200.click()            
             
             await self.page.wait_for_timeout(2000)
