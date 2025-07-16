@@ -29,7 +29,8 @@ async def test_start_task(tracker):
     correlation_id = "test-123"
     task_name = "Test Task"
     
-    await tracker.start_task(correlation_id, task_name)
+    returned_id = await tracker.start_task(correlation_id, task_name)
+    assert returned_id == correlation_id
     
     task = await tracker.get_task_progress(correlation_id)
     assert task is not None
@@ -173,13 +174,13 @@ async def test_get_task_events(tracker):
 @pytest.mark.anyio
 async def test_get_all_tasks(tracker):
     """Test retrieving all tasks."""
-    await tracker.start_task("task-1", "Task 1")
-    await tracker.start_task("task-2", "Task 2")
+    id1 = await tracker.start_task("task-1", "Task 1")
+    id2 = await tracker.start_task("task-2", "Task 2")
     
     all_tasks = await tracker.get_all_tasks()
     assert len(all_tasks) == 2
-    assert "task-1" in all_tasks
-    assert "task-2" in all_tasks
+    assert id1 in all_tasks
+    assert id2 in all_tasks
 
 
 @pytest.mark.anyio
@@ -294,3 +295,29 @@ async def test_cleanup_task_background():
     # Stop the cleanup task
     await tracker.stop_cleanup_task()
     assert tracker._cleanup_task.done()
+
+
+@pytest.mark.anyio
+async def test_start_task_auto_correlation_id(tracker):
+    """Test starting a task with auto-generated correlation ID."""
+    correlation_id = await tracker.start_task(task_name="Auto Task")
+    
+    # Should return a valid correlation ID
+    assert correlation_id is not None
+    assert len(correlation_id) > 0
+    
+    # Task should exist
+    task = await tracker.get_task_progress(correlation_id)
+    assert task is not None
+    assert task.correlation_id == correlation_id
+    assert task.task_name == "Auto Task"
+
+
+@pytest.mark.anyio
+async def test_format_progress_log(tracker):
+    """Test formatting progress log messages."""
+    correlation_id = "test-format-123"
+    message = "Test message"
+    
+    formatted = tracker.format_progress_log(correlation_id, message)
+    assert formatted == "[test-for] Test message"

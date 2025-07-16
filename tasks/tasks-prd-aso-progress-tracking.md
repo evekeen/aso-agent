@@ -4,7 +4,9 @@
 
 - `src/lib/progress_tracker.py` - Core progress tracking service with in-memory storage and event management
 - `src/lib/progress_tracker.py` - Core progress tracking service with in-memory storage, event management, and cleanup
-- `tests/test_progress_tracker.py` - Unit tests for progress tracker (14 test cases)
+- `src/lib/correlation_id.py` - Correlation ID utilities for tracking requests across distributed services
+- `tests/test_correlation_id.py` - Unit tests for correlation ID utilities (14 test cases)
+- `tests/test_progress_tracker.py` - Unit tests for progress tracker (16 test cases)
 - `src/agent/progress_middleware.py` - LangGraph middleware to emit progress events from workflow nodes
 - `src/agent/progress_middleware.test.py` - Unit tests for progress middleware
 - `aso_playwright_service/progress_reporter.py` - Progress reporting integration for Playwright service
@@ -25,7 +27,7 @@
 
 - [ ] 1.0 Implement Core Progress Tracking Infrastructure
   - [x] 1.1 Create progress tracker service with in-memory storage (`src/lib/progress_tracker.py`)
-  - [ ] 1.2 Implement event-based progress event system with timestamps and correlation IDs
+  - [x] 1.2 Implement event-based progress event system with timestamps and correlation IDs
   - [ ] 1.3 Add progress aggregation logic to combine LangGraph and microservice updates
   - [ ] 1.4 Create progress data models for different event types (start, update, error, completion)
   - [ ] 1.5 Implement memory cleanup and TTL for progress data

@@ -7,6 +7,8 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 from enum import Enum
 
+from .correlation_id import get_or_create_correlation_id, format_correlation_id
+
 
 class ProgressEventType(Enum):
     """Types of progress events."""
@@ -104,8 +106,11 @@ class ProgressTracker:
                 del self._tasks[correlation_id]
                 print(f"Cleaned up expired task: {correlation_id}")
     
-    async def start_task(self, correlation_id: str, task_name: str) -> None:
-        """Start tracking a new task."""
+    async def start_task(self, correlation_id: Optional[str] = None, task_name: str = "ASO Analysis") -> str:
+        """Start tracking a new task. Returns the correlation ID."""
+        if correlation_id is None:
+            correlation_id = get_or_create_correlation_id()
+            
         async with self._lock:
             task = TaskProgress(
                 correlation_id=correlation_id,
@@ -126,6 +131,7 @@ class ProgressTracker:
             task.events.append(event)
             
         await self.start_cleanup_task()
+        return correlation_id
     
     async def update_progress(
         self,
@@ -290,6 +296,10 @@ class ProgressTracker:
             "failed_tasks": len([t for t in self._tasks.values() if t.status == "failed"]),
             "cleanup_ttl_seconds": self._cleanup_ttl
         }
+    
+    def format_progress_log(self, correlation_id: str, message: str) -> str:
+        """Format a progress log message with correlation ID."""
+        return f"{format_correlation_id(correlation_id)} {message}"
 
 
 # Global instance
