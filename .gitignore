@@ -166,3 +166,6 @@ aso_cache.db
 test_signature.py
 aso_store.db
 node_modules/
+aso_agent.db
+aso_agent.db-shm
+aso_agent.db-wal

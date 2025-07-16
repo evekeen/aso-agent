@@ -1,7 +1,7 @@
 [project]
 name = "aso_agent"
 version = "0.0.1"
-description = "Starter template for making a new agent LangGraph."
+description = "ASO Analysis Agent with Web Service Interface"
 authors = [
     { name = "William Fu-Hinthorn", email = "13333726+hinthornw@users.noreply.github.com" },
 ]
@@ -9,14 +9,36 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"
 dependencies = [
+    # Core LangGraph
     "langgraph>=0.2.6",
-    "python-dotenv>=1.0.1",
-    "aiohttp>=3.9.0",
-    "pydantic>=2.0.0",
-    "aiosqlite>=0.20.0",
-    "browser-use>=0.5.4",
+    "langgraph-checkpoint-sqlite>=2.0.1",
+    "langchain-core>=0.3.33",
     "langchain-openai>=0.3.27",
+    
+    # Web Service
+    "fastapi>=0.115.5",
+    "uvicorn[standard]>=0.32.1",
+    "streamlit>=1.40.1",
+    "httpx>=0.27.2",
+    
+    # Data & Async
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.6.1",
+    "aiohttp>=3.9.0",
+    "aiosqlite>=0.20.0",
+    "pandas>=2.2.0",
+    
+    # Visualization
+    "plotly>=5.17.0",
+    
+    # Environment
+    "python-dotenv>=1.0.1",
     "nest-asyncio>=1.6.0",
+    
+    # Existing ASO tools
+    "browser-use>=0.5.4",
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
 ]
 
 
@@ -28,11 +50,15 @@ requires = ["setuptools>=73.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["langgraph.templates.agent", "agent", "lib"]
+packages = ["langgraph.templates.agent", "agent", "lib", "service", "client", "schema", "memory"]
 [tool.setuptools.package-dir]
 "langgraph.templates.agent" = "src/agent"
 "agent" = "src/agent"
 "lib" = "src/lib"
+"service" = "src/service"
+"client" = "src/client"
+"schema" = "src/schema"
+"memory" = "src/memory"
 
 
 [tool.setuptools.package-data]
