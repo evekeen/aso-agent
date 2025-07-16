@@ -10,9 +10,10 @@
 - `tests/test_progress_models.py` - Unit tests for progress models (16 test cases)
 - `tests/test_progress_tracker.py` - Unit tests for progress tracker (24 test cases including aggregation)
 - `src/agent/progress_middleware.py` - LangGraph middleware to emit progress events from workflow nodes
-- `src/agent/progress_middleware.test.py` - Unit tests for progress middleware
+- `tests/test_progress_middleware.py` - Unit tests for progress middleware (12 test cases)
+- `tests/test_progress_integration.py` - Integration tests for progress tracking in workflow (8 test cases)
 - `aso_playwright_service/progress_reporter.py` - Progress reporting integration for Playwright service
-- `aso_playwright_service/progress_reporter.test.py` - Unit tests for progress reporter
+- `tests/test_progress_reporter.py` - Unit tests for progress reporter (11 test cases)
 - `src/api/progress_routes.py` - FastAPI routes for progress polling endpoints
 - `src/api/progress_routes.test.py` - Unit tests for progress API routes
 - `src/lib/correlation_id.py` - Utility for generating and managing correlation IDs across services
@@ -35,21 +36,21 @@
   - [x] 1.5 Implement memory cleanup and TTL for progress data
   - [x] 1.6 Add unit tests for progress tracker core functionality
 
-- [ ] 2.0 Integrate Progress Tracking with LangGraph Workflow
-  - [ ] 2.1 Create LangGraph middleware to intercept node execution (`src/agent/progress_middleware.py`)
-  - [ ] 2.2 Add progress event emission at key workflow milestones (node start, completion, error)
-  - [ ] 2.3 Implement sub-progress tracking for long-running operations (keyword processing loops)
-  - [ ] 2.4 Add correlation ID generation and propagation through workflow state
-  - [ ] 2.5 Update existing nodes to emit meaningful progress descriptions and percentages
-  - [ ] 2.6 Add unit tests for progress middleware integration
+- [x] 2.0 Integrate Progress Tracking with LangGraph Workflow
+  - [x] 2.1 Create LangGraph middleware to intercept node execution (`src/agent/progress_middleware.py`)
+  - [x] 2.2 Add progress event emission at key workflow milestones (node start, completion, error)
+  - [x] 2.3 Implement sub-progress tracking for long-running operations (keyword processing loops)
+  - [x] 2.4 Add correlation ID generation and propagation through workflow state
+  - [x] 2.5 Update existing nodes to emit meaningful progress descriptions and percentages
+  - [x] 2.6 Add unit tests for progress middleware integration
 
-- [ ] 3.0 Add Progress Reporting to Playwright Microservice
-  - [ ] 3.1 Create progress reporter for Playwright service (`aso_playwright_service/progress_reporter.py`)
-  - [ ] 3.2 Integrate progress reporting into existing workflow steps (login, keyword processing, extraction)
-  - [ ] 3.3 Add detailed sub-task progress for keyword-by-keyword processing
-  - [ ] 3.4 Implement error reporting with retry attempt tracking
-  - [ ] 3.5 Add correlation ID support to link service progress with main workflow
-  - [ ] 3.6 Add unit tests for progress reporter functionality
+- [x] 3.0 Add Progress Reporting to Playwright Microservice
+  - [x] 3.1 Create progress reporter for Playwright service (`aso_playwright_service/progress_reporter.py`)
+  - [x] 3.2 Integrate progress reporting into existing workflow steps (login, keyword processing, extraction)
+  - [x] 3.3 Add detailed sub-task progress for keyword-by-keyword processing
+  - [x] 3.4 Implement error reporting with retry attempt tracking
+  - [x] 3.5 Add correlation ID support to link service progress with main workflow
+  - [x] 3.6 Add unit tests for progress reporter functionality
 
 - [ ] 4.0 Create Progress API Endpoints
   - [ ] 4.1 Implement FastAPI routes for progress polling (`src/api/progress_routes.py`)
