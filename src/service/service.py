@@ -180,7 +180,9 @@ async def invoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMe
 
     try:
         # Execute the agent
-        result = await agent.ainvoke(**kwargs)
+        input_data = kwargs["input"]
+        config = kwargs["config"]
+        result = await agent.ainvoke(input_data, config)
         
         # Extract the final message
         messages = result.get("messages", [])
@@ -235,20 +237,40 @@ async def message_generator(
 
     try:
         # Process streamed events from the agent
+        input_data = kwargs["input"]
+        config = kwargs["config"]
         async for stream_event in agent.astream(
-            **kwargs, stream_mode=["updates", "values"]
+            input_data, config, stream_mode=["updates", "values", "messages"]
         ):
             if not isinstance(stream_event, tuple):
                 continue
                 
             stream_mode, event = stream_event
             
-            if stream_mode == "message":
+            
+            # Skip empty events or handle special cases
+            if event is None:
+                continue
+            
+            if stream_mode == "message" or stream_mode == "messages":
                 # Handle direct message events
                 try:
-                    if isinstance(event, dict) and "run_id" not in event:
-                        event["run_id"] = run_id
-                    yield f"data: {json.dumps({'type': 'message', 'content': event})}\n\n"
+                    if isinstance(event, tuple):
+                        # Skip tuple events in messages mode - these are usually from LangGraph streaming
+                        continue
+                    elif hasattr(event, 'model_dump'):
+                        # Handle ChatMessage objects
+                        event_dict = event.model_dump()
+                        if "run_id" not in event_dict:
+                            event_dict["run_id"] = run_id
+                        yield f"data: {json.dumps({'type': 'message', 'content': event_dict})}\n\n"
+                    elif isinstance(event, dict):
+                        if "run_id" not in event:
+                            event["run_id"] = run_id
+                        yield f"data: {json.dumps({'type': 'message', 'content': event})}\n\n"
+                    else:
+                        # Convert other types to string
+                        yield f"data: {json.dumps({'type': 'message', 'content': {'type': 'ai', 'content': str(event), 'run_id': run_id}})}\n\n"
                 except Exception as e:
                     logger.error(f"Error processing message event: {e}")
                     continue
@@ -267,6 +289,34 @@ async def message_generator(
                     yield f"data: {json.dumps({'type': 'intermediate', 'content': event})}\n\n"
                 except Exception as e:
                     logger.error(f"Error processing intermediate event: {e}")
+                    continue
+            
+            elif stream_mode == "interrupt":
+                # Handle interrupt events (agent asking for clarification)
+                try:
+                    yield f"data: {json.dumps({'type': 'interrupt', 'content': event})}\n\n"
+                except Exception as e:
+                    logger.error(f"Error processing interrupt event: {e}")
+                    continue
+            
+            elif stream_mode == "updates":
+                # Handle updates including interrupts
+                try:
+                    if isinstance(event, dict):
+                        for node, updates in event.items():
+                            if node == "__interrupt__":
+                                # Handle interrupts (questions to user)
+                                for interrupt in updates:
+                                    interrupt_message = ChatMessage(
+                                        type="ai",
+                                        content=interrupt.value,
+                                        run_id=run_id
+                                    )
+                                    yield f"data: {json.dumps({'type': 'message', 'content': interrupt_message.model_dump()})}\n\n"
+                                    # Also signal that we're waiting for user response
+                                    yield f"data: {json.dumps({'type': 'interrupt', 'content': {'message': interrupt.value}})}\n\n"
+                except Exception as e:
+                    logger.error(f"Error processing updates: {e}")
                     continue
             
             elif stream_mode == "values":

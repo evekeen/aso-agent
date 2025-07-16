@@ -86,16 +86,28 @@ class ASOAgentWrapper:
                 # Handle state updates
                 if stream_type == "updates":
                     for node_name, updates in data.items():
+                        # Handle interrupts
+                        if node_name == "__interrupt__":
+                            for interrupt in updates:
+                                interrupt_message = self._convert_to_chat_message(
+                                    AIMessage(content=interrupt.value)
+                                )
+                                yield ("message", interrupt_message)
+                                yield ("interrupt", {"message": interrupt.value})
+                            continue
+                            
                         if not updates:
                             continue
                             
                         # Handle progress updates
-                        await self._handle_progress_updates(
+                        async for progress_event in self._handle_progress_updates(
                             node_name, updates, correlation_id, progress_tracker, last_progress
-                        )
+                        ):
+                            yield progress_event
                         
                         # Handle intermediate results
-                        await self._handle_intermediate_results(node_name, updates)
+                        async for intermediate_event in self._handle_intermediate_results(node_name, updates):
+                            yield intermediate_event
                         
                         # Handle messages
                         if updates.get("messages"):
@@ -125,23 +137,10 @@ class ASOAgentWrapper:
         messages = input_data.get("messages", [])
         correlation_id = str(uuid.uuid4())
         
-        # Extract app ideas from user message if available
-        app_ideas = []
-        if messages:
-            last_message = messages[-1]
-            if hasattr(last_message, 'content'):
-                # Simple extraction - in production you might want more sophisticated parsing
-                content = last_message.content.lower()
-                if "golf" in content:
-                    app_ideas.append("golf shot tracer")
-                if "sleep" in content or "snoring" in content:
-                    app_ideas.append("snoring tracker")
-                # Add more keyword detection as needed
-        
         return {
             "messages": messages,
             "correlation_id": correlation_id,
-            "ideas": app_ideas or ["golf shot tracer", "snoring tracker"],  # Fallback
+            "ideas": [],  # Will be extracted by collect_app_ideas node
             "initial_keywords": {},
             "keywords": {},
             "apps_by_keyword": {},

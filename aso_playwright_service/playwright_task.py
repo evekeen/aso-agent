@@ -202,7 +202,7 @@ class PlaywrightASOTask:
     @with_progress_tracking("menu_setup", "Setting up navigation menu")
     async def _expand_left_menu(self):
         """Expand the left menu if collapsed."""
-        await self.page.wait_for_selector('app-toggle-menu-button', timeout=10000)
+        await self.page.wait_for_selector('app-toggle-menu-button', timeout=action_timeout * 1000)
         print("✅ Dashboard loaded")
                 
         try:

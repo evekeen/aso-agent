@@ -141,7 +141,7 @@ class AppIdeaAnalysis(BaseModel):
 class ASOAnalysisReport(BaseModel):
     """Complete ASO analysis report."""
     
-    timestamp: datetime = Field(description="Analysis timestamp")
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat(), description="Analysis timestamp")
     analysis_metadata: Dict[str, Any] = Field(
         description="Metadata about the analysis"
     )
@@ -164,14 +164,14 @@ class IntermediateResult(BaseModel):
     
     result_type: str = Field(description="Type of intermediate result")
     data: Dict[str, Any] = Field(description="Result data")
-    timestamp: datetime = Field(default_factory=datetime.now)
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 
 class StreamEvent(BaseModel):
     """Event in the analysis stream."""
     
-    type: Literal["message", "progress", "intermediate", "error", "complete"] = Field(
+    type: Literal["message", "progress", "intermediate", "interrupt", "error", "complete"] = Field(
         description="Type of stream event"
     )
     content: Dict[str, Any] = Field(description="Event content")
-    timestamp: datetime = Field(default_factory=datetime.now)
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())

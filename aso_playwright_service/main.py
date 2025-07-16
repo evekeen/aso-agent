@@ -186,8 +186,8 @@ async def analyze_keywords(request: AnalyzeKeywordsRequest):
     if not request.keywords:
         raise HTTPException(status_code=400, detail="Keywords list cannot be empty")
     
-    if len(request.keywords) > 50:
-        raise HTTPException(status_code=400, detail="Maximum 50 keywords allowed per request")
+    if len(request.keywords) > 200:
+        raise HTTPException(status_code=400, detail="Maximum 200 keywords allowed per request")
     
     try:
         print(f"📨 Received request for {len(request.keywords)} keywords")

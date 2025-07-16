@@ -489,8 +489,8 @@ async def main() -> None:
         keywords_per_idea = st.slider(
             "Keywords per App Idea",
             min_value=5,
-            max_value=50,
-            value=20
+            max_value=100,
+            value=30
         )
         
         use_streaming = st.toggle("Stream Results", value=True)

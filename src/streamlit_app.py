@@ -87,8 +87,8 @@ async def main() -> None:
         keywords_per_idea = st.slider(
             "Keywords per App Idea",
             min_value=5,
-            max_value=50,
-            value=20,
+            max_value=100,
+            value=30,
             help="Number of keywords to generate for each app idea"
         )
         
@@ -111,6 +111,21 @@ async def main() -> None:
            - Traffic potential
         4. **Export data** for further analysis
         """)
+        
+        st.subheader("💡 Example Prompts")
+        st.markdown("""
+        **Clear requests (will proceed directly):**
+        - "Analyze fitness tracking apps"
+        - "I want to explore meditation and sleep apps"
+        - "Research productivity apps for students"
+        - "Investigate cooking and recipe apps"
+        
+        **Vague requests (agent will ask for clarification):**
+        - "I have an app idea"
+        - "Apps for my business"
+        - "Something with social features"
+        - "Health apps"
+        """)
     
     # Main chat interface
     st.title(f"{APP_ICON} ASO Analysis Agent")
@@ -126,7 +141,7 @@ async def main() -> None:
                 display_aso_results(message.custom_data["final_report"])
     
     # Chat input
-    if user_input := st.chat_input("Describe your app ideas for ASO analysis..."):
+    if user_input := st.chat_input("Describe the app ideas you want to analyze (e.g., 'fitness tracking apps' or 'productivity tools for students')"):
         # Add user message
         user_message = ChatMessage(type="human", content=user_input)
         st.session_state.messages.append(user_message)
@@ -205,6 +220,12 @@ async def handle_streaming_response(
             elif event_type == "intermediate":
                 # Show intermediate results
                 display_intermediate_results(results_container, content)
+                
+            elif event_type == "interrupt":
+                # Handle interrupt (agent asking for clarification)
+                interrupt_message = content.get("message", "Agent is asking for clarification")
+                st.info(f"💬 {interrupt_message}")
+                # The conversation continues, user can respond in chat
                 
             elif event_type == "error":
                 st.error(f"Analysis error: {content}")
@@ -409,7 +430,8 @@ def display_keywords_tab(app_ideas: Dict[str, Any]) -> None:
             label="📥 Download Keywords CSV",
             data=csv,
             file_name=f"{selected_idea}_keywords_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
+            mime="text/csv",
+            key=f"download_csv_{selected_idea}"
         )
 
 

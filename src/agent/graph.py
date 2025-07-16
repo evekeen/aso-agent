@@ -33,8 +33,142 @@ class State(MessagesState):
 
 
 @with_progress_tracking("collect_app_ideas", "Collecting app ideas for ASO analysis")
-def collect_app_ideas(state: dict) -> dict:
-    return {"ideas": ["golf shot tracer", "snoring tracker"]}
+async def collect_app_ideas(state: dict) -> dict:
+    """Extract app ideas from user messages using LLM-based content extraction."""
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+    from langgraph.errors import NodeInterrupt
+    from pydantic import BaseModel, Field
+    from typing import List, Optional
+    
+    messages = state.get("messages", [])
+    
+    # Get the user's conversation history
+    user_messages = []
+    for msg in messages:
+        if hasattr(msg, 'type') and msg.type == "human":
+            user_messages.append(msg.content)
+        elif isinstance(msg, HumanMessage):
+            user_messages.append(msg.content)
+    
+    if not user_messages:
+        # No user message found - ask for input
+        raise NodeInterrupt(
+            "I need you to describe the app ideas you want me to analyze. For example:\n\n" +
+            "• 'Analyze fitness tracking apps'\n" +
+            "• 'I want to explore meditation and sleep apps'\n" +
+            "• 'What about productivity apps for students?'\n" +
+            "• 'Investigate cooking and recipe apps'\n\n" +
+            "What type of apps would you like me to research?"
+        )
+    
+    # Combine all user messages for context
+    full_conversation = " ".join(user_messages)
+    latest_message = user_messages[-1]
+    
+    # Define structured output for app idea extraction and assessment
+    class AppIdeasAssessment(BaseModel):
+        """Assessment of app ideas from user message."""
+        confidence: int = Field(
+            description="Confidence level (1-10) that clear, specific app ideas can be extracted from the user's message",
+            ge=1, le=10
+        )
+        app_ideas: Optional[List[str]] = Field(
+            description="List of specific app ideas extracted (2-4 words each). Only provide if confidence >= 6.",
+            default=None
+        )
+        needs_clarification: bool = Field(
+            description="Whether the user's intent needs clarification to proceed with meaningful analysis"
+        )
+        follow_up_question: Optional[str] = Field(
+            description="Specific follow-up question to ask the user if clarification is needed",
+            default=None
+        )
+        reasoning: str = Field(
+            description="Explanation of the assessment and why clarification may be needed"
+        )
+    
+    # Create LLM with structured output
+    try:
+        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        assessor = llm.with_structured_output(AppIdeasAssessment)
+        
+        # System prompt for app idea assessment
+        system_prompt = """You are an expert at assessing whether user messages contain clear app ideas for ASO (App Store Optimization) analysis.
+
+Your task is to:
+1. Assess whether the user's message contains specific, analyzable app ideas
+2. Extract clear app ideas if they exist
+3. Identify when clarification is needed for meaningful analysis
+
+HIGH CONFIDENCE (7-10): Clear, specific app ideas that can be immediately analyzed
+- "Analyze fitness tracking apps" → ["fitness tracker", "workout planner"]
+- "Sleep and meditation apps for anxiety" → ["meditation app", "sleep tracker", "anxiety relief app"]
+- "I want to research cooking apps with meal planning" → ["recipe app", "meal planner"]
+
+MEDIUM CONFIDENCE (4-6): General direction but needs more specificity
+- "I'm interested in health apps" → Needs clarification: which type of health apps?
+- "Apps for my business" → Needs clarification: what type of business?
+- "Something with social features" → Needs clarification: what purpose/category?
+
+LOW CONFIDENCE (1-3): Vague, unclear, or no app ideas mentioned
+- "Hello" → Needs clarification about app analysis intent
+- "What can you do?" → Needs clarification about specific app ideas
+- "I have an idea" → Needs clarification about the actual idea
+
+Rules for follow-up questions:
+- Be specific and helpful
+- Offer examples in the question
+- Guide toward actionable app categories
+- Keep questions conversational and encouraging"""
+        
+        # Assess the user's message
+        update_node_progress(50.0, "Analyzing user message for app ideas")
+        
+        assessment = await assessor.ainvoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"User's full conversation: {full_conversation}\n\nLatest message: {latest_message}")
+        ])
+        
+        print(f"🔍 Assessment confidence: {assessment.confidence}/10")
+        print(f"💭 Reasoning: {assessment.reasoning}")
+        
+        # Handle based on confidence level
+        if assessment.confidence >= 6 and assessment.app_ideas:
+            app_ideas = assessment.app_ideas
+            print(f"📱 Extracted app ideas: {app_ideas}")
+            update_node_progress(100.0, f"Successfully extracted {len(app_ideas)} app ideas")
+            return {"ideas": app_ideas}
+        
+        elif assessment.needs_clarification and assessment.follow_up_question:
+            print(f"❓ Asking for clarification: {assessment.follow_up_question}")
+            raise NodeInterrupt(assessment.follow_up_question)
+        
+        else:
+            # Generic clarification if assessment didn't provide a specific question
+            clarification_msg = (
+                "I need more specific information about the apps you want me to analyze. "
+                "Could you tell me more about:\n\n"
+                "• What type of apps are you interested in? (e.g., fitness, productivity, entertainment)\n"
+                "• What problem should these apps solve?\n"
+                "• Who is the target audience?\n\n"
+                "For example: 'fitness apps for runners' or 'productivity tools for students'"
+            )
+            print(f"❓ Asking for generic clarification")
+            raise NodeInterrupt(clarification_msg)
+        
+    except Exception as e:
+        print(f"❌ Error during app idea assessment: {e}")
+        # Ask for clarification instead of falling back
+        error_msg = (
+            "I had trouble understanding your request. Could you please describe the specific "
+            "app ideas you'd like me to analyze?\n\n"
+            "Examples:\n"
+            "• 'Analyze meditation and mindfulness apps'\n"
+            "• 'I want to research fitness tracking applications'\n"
+            "• 'Explore productivity apps for remote workers'"
+        )
+        raise NodeInterrupt(error_msg)
 
 
 @with_progress_tracking("generate_initial_keywords", "Generating initial keywords using LLM")
