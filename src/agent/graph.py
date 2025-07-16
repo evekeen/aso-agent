@@ -281,8 +281,10 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
     
     This node:
     1. Gets filtered keywords from state
-    2. Fetches real difficulty and traffic data from ASO Mobile using microservice
-    3. Returns difficulty and traffic scores by keyword
+    2. Checks database for already analyzed keywords
+    3. Fetches real difficulty and traffic data from ASO Mobile using microservice for unanalyzed keywords
+    4. Stores results in database
+    5. Returns difficulty and traffic scores by keyword
     """
     from lib.aso_service_client import analyze_keywords_via_service
     
@@ -294,56 +296,98 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
             "traffic_by_keyword": {}
         }
     
-    print(f"🔍 Fetching ASO metrics for {len(filtered_keywords)} keywords using microservice...")
+    # Get store instance
+    store = get_aso_store()
+    
+    # Check which keywords already have cached metrics
+    print(f"🔍 Checking database for cached keyword metrics...")
+    unanalyzed_keywords = await store.get_unanalyzed_keywords(filtered_keywords)
     
     difficulty_by_keyword = {}
     traffic_by_keyword = {}
-    failed_keywords = []
     
-    try:
-        # Call the microservice
-        keyword_metrics = await analyze_keywords_via_service(filtered_keywords)
-        
-        if not keyword_metrics:
-            print("⚠️ No metrics returned from ASO service")
-        else:
-            # Process the returned metrics
-            for keyword in filtered_keywords:
-                if keyword in keyword_metrics:
-                    metrics = keyword_metrics[keyword]
-
-                    difficulty_by_keyword[keyword] = metrics.difficulty
-                    traffic_by_keyword[keyword] = metrics.traffic
-                    
-                    # Log detailed results
-                    difficulty_level = "Easy" if metrics.difficulty <= 30 else "Medium" if metrics.difficulty <= 60 else "Hard" if metrics.difficulty <= 80 else "Very Hard"
-                    traffic_level = "Low" if metrics.traffic <= 30 else "Medium" if metrics.traffic <= 60 else "High" if metrics.traffic <= 80 else "Very High"
-                    
-                    print(f"  '{keyword}':")
-                    print(f"    Difficulty: {metrics.difficulty}/100 ({difficulty_level})")
-                    print(f"    Traffic: {metrics.traffic}/100 ({traffic_level})")
+    # Load cached metrics for already analyzed keywords
+    cached_count = 0
+    cached_weak_count = 0
+    for keyword in filtered_keywords:
+        if keyword not in unanalyzed_keywords:
+            metrics = await store.get_keyword_metrics(keyword)
+            if metrics:
+                if metrics.get("difficulty", 0.0) == 0.0:
+                    cached_weak_count += 1
                 else:
-                    failed_keywords.append(keyword)
-                    print(f"⚠️ No metrics found for keyword '{keyword}'")
-                    
-    except Exception as e:
-        print(f"❌ Error fetching ASO metrics: {e}")
-        raise e
+                    difficulty_by_keyword[keyword] = metrics["difficulty"]
+                    traffic_by_keyword[keyword] = metrics["traffic"]
+                    cached_count += 1
+    
+    print(f"📊 Keyword Analysis Status:")
+    print(f"  • Total keywords: {len(filtered_keywords)}")
+    print(f"  • Already analyzed (cached): {cached_count}")
+    print(f"  • Previously identified as weak: {cached_weak_count}")
+    print(f"  • Needs analysis: {len(unanalyzed_keywords)}")
+    
+    # Only analyze unanalyzed keywords
+    if unanalyzed_keywords:
+        print(f"🔍 Fetching ASO metrics for {len(unanalyzed_keywords)} new keywords using microservice...")
+        
+        failed_keywords = []
+        
+        try:
+            # Call the microservice for unanalyzed keywords only
+            keyword_metrics = await analyze_keywords_via_service(unanalyzed_keywords)
+            
+            if not keyword_metrics:
+                print("⚠️ No metrics returned from ASO service")
+            else:
+                # Process the returned metrics
+                weak_keywords = []
+                for keyword in unanalyzed_keywords:
+                    if keyword in keyword_metrics:
+                        metrics = keyword_metrics[keyword]
+
+                        # Check if keyword is weak (0.0 difficulty)
+                        if metrics.difficulty == 0.0:
+                            weak_keywords.append(keyword)
+                            print(f"  '{keyword}': Too weak (difficulty: 0.0) - eliminated from analysis")
+                        else:
+                            difficulty_by_keyword[keyword] = metrics.difficulty
+                            traffic_by_keyword[keyword] = metrics.traffic
+                            
+                            # Log detailed results
+                            difficulty_level = "Easy" if metrics.difficulty <= 30 else "Medium" if metrics.difficulty <= 60 else "Hard" if metrics.difficulty <= 80 else "Very Hard"
+                            traffic_level = "Low" if metrics.traffic <= 30 else "Medium" if metrics.traffic <= 60 else "High" if metrics.traffic <= 80 else "Very High"
+                            
+                            print(f"  '{keyword}':")
+                            print(f"    Difficulty: {metrics.difficulty}/100 ({difficulty_level})")
+                            print(f"    Traffic: {metrics.traffic}/100 ({traffic_level})")
+                        
+                        # Store in database (including weak keywords for future filtering)
+                        await store.set_keyword_metrics(keyword, metrics.difficulty, metrics.traffic)
+                    else:
+                        failed_keywords.append(keyword)
+                        print(f"⚠️ No metrics found for keyword '{keyword}'")
+                        
+        except Exception as e:
+            print(f"❌ Error fetching ASO metrics: {e}")
+            raise e
     
     # Calculate statistics
+    total_weak_keywords = cached_weak_count + (len(weak_keywords) if 'weak_keywords' in locals() else 0)
+    
     if difficulty_by_keyword:
         avg_difficulty = sum(difficulty_by_keyword.values()) / len(difficulty_by_keyword)
-        easy_keywords = len([k for k, v in difficulty_by_keyword.items() if v <= 3])
-        medium_keywords = len([k for k, v in difficulty_by_keyword.items() if 3 < v <= 6])
-        hard_keywords = len([k for k, v in difficulty_by_keyword.items() if v > 6])
+        easy_keywords = len([k for k, v in difficulty_by_keyword.items() if v <= 30])
+        medium_keywords = len([k for k, v in difficulty_by_keyword.items() if 30 < v <= 60])
+        hard_keywords = len([k for k, v in difficulty_by_keyword.items() if v > 60])
         
         print(f"\n🎯 Keyword Difficulty Summary:")
-        print(f"  • Average difficulty: {avg_difficulty:.2f}/10")
-        print(f"  • Easy keywords (≤3): {easy_keywords}")
-        print(f"  • Medium keywords (3-6): {medium_keywords}")
-        print(f"  • Hard keywords (>6): {hard_keywords}")
+        print(f"  • Average difficulty: {avg_difficulty:.2f}/100")
+        print(f"  • Easy keywords (≤30): {easy_keywords}")
+        print(f"  • Medium keywords (30-60): {medium_keywords}")
+        print(f"  • Hard keywords (>60): {hard_keywords}")
+        print(f"  • Weak keywords (eliminated): {total_weak_keywords}")
         
-        if failed_keywords:
+        if unanalyzed_keywords and failed_keywords:
             print(f"  • Failed analyses: {len(failed_keywords)}")
         
         # Traffic statistics
@@ -351,6 +395,9 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
             avg_traffic = sum(traffic_by_keyword.values()) / len(traffic_by_keyword)
             print(f"\n📊 Keyword Traffic Summary:")
             print(f"  • Average traffic: {avg_traffic:.2f}/100")
+    elif total_weak_keywords > 0:
+        print(f"\n🎯 Keyword Analysis Summary:")
+        print(f"  • All {total_weak_keywords} keywords were too weak (difficulty: 0.0) and eliminated")
     
     return {
         "difficulty_by_keyword": difficulty_by_keyword,

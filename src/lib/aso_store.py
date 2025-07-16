@@ -323,6 +323,50 @@ class ASOSQLiteStore(BaseStore):
         
         # Run async batch operation
         return loop.run_until_complete(self.abatch(ops))
+    
+    async def get_keyword_metrics(self, keyword: str) -> Optional[Dict[str, Any]]:
+        """Get cached keyword metrics (difficulty + traffic)."""
+        item = await self.aget(ASONamespaces.keyword_metrics(), keyword.lower())
+        return item.value if item else None
+    
+    async def set_keyword_metrics(self, keyword: str, difficulty: float, traffic: float) -> None:
+        """Store keyword metrics (difficulty + traffic)."""
+        await self.aput(
+            ASONamespaces.keyword_metrics(),
+            keyword.lower(),
+            {
+                "difficulty": difficulty,
+                "traffic": traffic,
+                "analyzed_at": datetime.now().isoformat()
+            }
+        )
+    
+    async def get_unanalyzed_keywords(self, keywords: List[str]) -> List[str]:
+        """Filter out keywords that already have cached metrics."""
+        unanalyzed = []
+        for keyword in keywords:
+            item = await self.aget(ASONamespaces.keyword_metrics(), keyword.lower())
+            if not item:
+                unanalyzed.append(keyword)
+        return unanalyzed
+    
+    async def filter_weak_keywords(self, keywords: List[str]) -> tuple[List[str], List[str]]:
+        """Filter out weak keywords (difficulty = 0.0) from keyword list.
+        
+        Returns:
+            tuple: (valid_keywords, weak_keywords)
+        """
+        valid_keywords = []
+        weak_keywords = []
+        
+        for keyword in keywords:
+            metrics = await self.get_keyword_metrics(keyword)
+            if metrics and metrics.get("difficulty", 0.0) == 0.0:
+                weak_keywords.append(keyword)
+            else:
+                valid_keywords.append(keyword)
+        
+        return valid_keywords, weak_keywords
 
 
 # ASO-specific namespace helpers
@@ -333,6 +377,16 @@ class ASONamespaces:
     def keyword_difficulty() -> Tuple[str, ...]:
         """Namespace for keyword difficulty cache."""
         return ("aso", "keyword_difficulty")
+    
+    @staticmethod
+    def keyword_traffic() -> Tuple[str, ...]:
+        """Namespace for keyword traffic cache."""
+        return ("aso", "keyword_traffic")
+    
+    @staticmethod
+    def keyword_metrics() -> Tuple[str, ...]:
+        """Namespace for combined keyword metrics (difficulty + traffic)."""
+        return ("aso", "keyword_metrics")
     
     @staticmethod
     def app_revenue() -> Tuple[str, ...]:
