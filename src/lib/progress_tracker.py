@@ -1,42 +1,25 @@
 """Progress tracking service with in-memory storage for ASO analysis workflows."""
 
 import asyncio
-import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from datetime import datetime
-from enum import Enum
 
 from .correlation_id import get_or_create_correlation_id, format_correlation_id
-
-
-class ProgressEventType(Enum):
-    """Types of progress events."""
-    START = "start"
-    UPDATE = "update"  
-    ERROR = "error"
-    COMPLETION = "completion"
-    SUB_TASK_START = "sub_task_start"
-    SUB_TASK_UPDATE = "sub_task_update"
-    SUB_TASK_COMPLETION = "sub_task_completion"
-
-
-@dataclass
-class ProgressEvent:
-    """Individual progress event."""
-    correlation_id: str
-    event_type: ProgressEventType
-    timestamp: datetime
-    node_name: str
-    current_operation: str
-    progress_percentage: float = 0.0
-    elapsed_time: float = 0.0
-    status: str = "running"
-    error_message: Optional[str] = None
-    error_type: Optional[str] = None
-    retry_count: int = 0
-    recovery_action: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+from .progress_models import (
+    ProgressEvent,
+    ProgressStatus,
+    WorkflowStartEvent,
+    WorkflowCompletionEvent,
+    NodeStartEvent,
+    NodeUpdateEvent,
+    NodeCompletionEvent,
+    SubTaskUpdateEvent,
+    ErrorEvent,
+    MicroserviceUpdateEvent,
+    ProgressTimeline,
+    serialize_event
+)
 
 
 @dataclass
@@ -44,7 +27,7 @@ class NodeProgress:
     """Progress tracking for a single node."""
     node_name: str
     progress_percentage: float = 0.0
-    status: str = "pending"  # pending, running, completed, failed
+    status: ProgressStatus = ProgressStatus.PENDING
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     current_operation: str = ""
@@ -62,13 +45,14 @@ class TaskProgress:
     current_operation: str = ""
     overall_progress: float = 0.0
     elapsed_time: float = 0.0
-    status: str = "running"
+    status: ProgressStatus = ProgressStatus.RUNNING
     events: List[ProgressEvent] = field(default_factory=list)
     sub_tasks: Dict[str, float] = field(default_factory=dict)
     error_count: int = 0
     last_update: datetime = field(default_factory=datetime.now)
     node_progress: Dict[str, NodeProgress] = field(default_factory=dict)
     workflow_steps: List[str] = field(default_factory=list)
+    timeline: Optional[ProgressTimeline] = field(default=None)
 
 
 class ProgressTracker:
@@ -79,6 +63,12 @@ class ProgressTracker:
         self._cleanup_ttl = cleanup_ttl_seconds
         self._cleanup_task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
+    
+    def _add_event(self, task: TaskProgress, event: ProgressEvent) -> None:
+        """Add an event to both task events and timeline."""
+        task.events.append(event)
+        if task.timeline:
+            task.timeline.add_event(event)
         
     async def start_cleanup_task(self):
         """Start the background cleanup task."""
@@ -112,7 +102,7 @@ class ProgressTracker:
             expired_ids = []
             
             for correlation_id, task in self._tasks.items():
-                if task.status in ["completed", "failed"]:
+                if task.status in [ProgressStatus.COMPLETED, ProgressStatus.FAILED]:
                     time_since_completion = (now - task.last_update).total_seconds()
                     if time_since_completion > self._cleanup_ttl:
                         expired_ids.append(correlation_id)
@@ -143,11 +133,20 @@ class ProgressTracker:
             ]
             
         async with self._lock:
+            now = datetime.now()
+            
+            # Create timeline
+            timeline = ProgressTimeline(
+                correlation_id=correlation_id,
+                task_name=task_name
+            )
+            
             task = TaskProgress(
                 correlation_id=correlation_id,
                 task_name=task_name,
-                start_time=datetime.now(),
-                workflow_steps=workflow_steps
+                start_time=now,
+                workflow_steps=workflow_steps,
+                timeline=timeline
             )
             self._tasks[correlation_id] = task
             
@@ -155,16 +154,14 @@ class ProgressTracker:
             for step in workflow_steps:
                 task.node_progress[step] = NodeProgress(node_name=step)
             
-            # Add start event
-            event = ProgressEvent(
+            # Add start event using new event model
+            event = WorkflowStartEvent(
                 correlation_id=correlation_id,
-                event_type=ProgressEventType.START,
-                timestamp=datetime.now(),
-                node_name="workflow",
-                current_operation=f"Starting {task_name}",
-                status="running"
+                timestamp=now,
+                task_name=task_name,
+                workflow_steps=workflow_steps
             )
-            task.events.append(event)
+            self._add_event(task, event)
             
         await self.start_cleanup_task()
         return correlation_id
@@ -193,18 +190,18 @@ class ProgressTracker:
             task.elapsed_time = elapsed
             task.last_update = now
             
-            # Add progress event
-            event = ProgressEvent(
+            # Add progress event using new event model
+            event = NodeUpdateEvent(
                 correlation_id=correlation_id,
-                event_type=ProgressEventType.UPDATE,
                 timestamp=now,
                 node_name=node_name,
                 current_operation=current_operation,
                 progress_percentage=progress_percentage,
+                status=ProgressStatus.RUNNING,
                 elapsed_time=elapsed,
                 metadata=metadata or {}
             )
-            task.events.append(event)
+            self._add_event(task, event)
     
     async def update_sub_task_progress(
         self,
@@ -212,7 +209,7 @@ class ProgressTracker:
         sub_task_name: str,
         progress_percentage: float,
         current_operation: str,
-        node_name: str = "sub_task"
+        node_name: str = "default_node"
     ) -> None:
         """Update progress for a sub-task."""
         async with self._lock:
@@ -223,81 +220,20 @@ class ProgressTracker:
             # Update sub-task progress
             task.sub_tasks[sub_task_name] = progress_percentage
             
-            # Add sub-task event
-            event = ProgressEvent(
+            # Add sub-task event using new event model
+            now = datetime.now()
+            event = SubTaskUpdateEvent(
                 correlation_id=correlation_id,
-                event_type=ProgressEventType.SUB_TASK_UPDATE,
-                timestamp=datetime.now(),
+                timestamp=now,
                 node_name=node_name,
+                sub_task_name=sub_task_name,
                 current_operation=current_operation,
                 progress_percentage=progress_percentage,
-                elapsed_time=(datetime.now() - task.start_time).total_seconds(),
+                status=ProgressStatus.RUNNING,
+                elapsed_time=(now - task.start_time).total_seconds(),
                 metadata={"sub_task": sub_task_name}
             )
-            task.events.append(event)
-    
-    async def report_error(
-        self,
-        correlation_id: str,
-        node_name: str,
-        error_message: str,
-        error_type: str = "error",
-        retry_count: int = 0,
-        recovery_action: Optional[str] = None
-    ) -> None:
-        """Report an error during task execution."""
-        async with self._lock:
-            task = self._tasks.get(correlation_id)
-            if not task:
-                return
-            
-            task.error_count += 1
-            task.last_update = datetime.now()
-            
-            # Add error event
-            event = ProgressEvent(
-                correlation_id=correlation_id,
-                event_type=ProgressEventType.ERROR,
-                timestamp=datetime.now(),
-                node_name=node_name,
-                current_operation=f"Error in {node_name}",
-                elapsed_time=(datetime.now() - task.start_time).total_seconds(),
-                status="error",
-                error_message=error_message,
-                error_type=error_type,
-                retry_count=retry_count,
-                recovery_action=recovery_action
-            )
-            task.events.append(event)
-    
-    async def complete_task(
-        self,
-        correlation_id: str,
-        success: bool = True,
-        final_message: str = "Task completed"
-    ) -> None:
-        """Mark a task as completed."""
-        async with self._lock:
-            task = self._tasks.get(correlation_id)
-            if not task:
-                return
-            
-            task.status = "completed" if success else "failed"
-            task.overall_progress = 100.0 if success else task.overall_progress
-            task.last_update = datetime.now()
-            
-            # Add completion event
-            event = ProgressEvent(
-                correlation_id=correlation_id,
-                event_type=ProgressEventType.COMPLETION,
-                timestamp=datetime.now(),
-                node_name="workflow",
-                current_operation=final_message,
-                progress_percentage=task.overall_progress,
-                elapsed_time=(datetime.now() - task.start_time).total_seconds(),
-                status=task.status
-            )
-            task.events.append(event)
+            self._add_event(task, event)
     
     async def get_task_progress(self, correlation_id: str) -> Optional[TaskProgress]:
         """Get current progress for a task."""
@@ -327,15 +263,93 @@ class ProgressTracker:
         """Get statistics about the progress tracker."""
         return {
             "total_tasks": len(self._tasks),
-            "active_tasks": len([t for t in self._tasks.values() if t.status == "running"]),
-            "completed_tasks": len([t for t in self._tasks.values() if t.status == "completed"]),
-            "failed_tasks": len([t for t in self._tasks.values() if t.status == "failed"]),
+            "active_tasks": len([t for t in self._tasks.values() if t.status == ProgressStatus.RUNNING]),
+            "completed_tasks": len([t for t in self._tasks.values() if t.status == ProgressStatus.COMPLETED]),
+            "failed_tasks": len([t for t in self._tasks.values() if t.status == ProgressStatus.FAILED]),
             "cleanup_ttl_seconds": self._cleanup_ttl
         }
     
     def format_progress_log(self, correlation_id: str, message: str) -> str:
         """Format a progress log message with correlation ID."""
         return f"{format_correlation_id(correlation_id)} {message}"
+    
+    async def report_error(
+        self,
+        correlation_id: str,
+        node_name: str,
+        error_message: str,
+        error_type: str = "error",
+        retry_count: int = 0,
+        recovery_action: Optional[str] = None,
+        stack_trace: Optional[str] = None
+    ) -> None:
+        """Report an error during task execution using structured event model."""
+        async with self._lock:
+            task = self._tasks.get(correlation_id)
+            if not task:
+                return
+            
+            now = datetime.now()
+            task.error_count += 1
+            task.last_update = now
+            
+            # Add error event using new event model
+            event = ErrorEvent(
+                correlation_id=correlation_id,
+                timestamp=now,
+                node_name=node_name,
+                error_type=error_type,
+                error_message=error_message,
+                retry_count=retry_count,
+                recovery_action=recovery_action,
+                stack_trace=stack_trace,
+                elapsed_time=(now - task.start_time).total_seconds()
+            )
+            self._add_event(task, event)
+    
+    async def complete_task(
+        self,
+        correlation_id: str,
+        success: bool = True,
+        final_message: str = "Task completed",
+        summary: Optional[str] = None
+    ) -> None:
+        """Mark a task as completed using structured event model."""
+        async with self._lock:
+            task = self._tasks.get(correlation_id)
+            if not task:
+                return
+            
+            now = datetime.now()
+            task.status = ProgressStatus.COMPLETED if success else ProgressStatus.FAILED
+            task.overall_progress = 100.0 if success else task.overall_progress
+            task.last_update = now
+            
+            # Calculate total duration
+            total_duration = (now - task.start_time).total_seconds()
+            
+            # Add completion event using new event model
+            event = WorkflowCompletionEvent(
+                correlation_id=correlation_id,
+                timestamp=now,
+                task_name=task.task_name,
+                status=task.status,
+                final_progress=task.overall_progress,
+                total_duration=total_duration,
+                elapsed_time=total_duration,
+                error_count=task.error_count,
+                summary=summary or final_message
+            )
+            self._add_event(task, event)
+    
+    async def get_serialized_events(self, correlation_id: str) -> List[Dict[str, Any]]:
+        """Get serialized events for a task."""
+        async with self._lock:
+            task = self._tasks.get(correlation_id)
+            if not task:
+                return []
+            
+            return [serialize_event(event) for event in task.events]
     
     async def start_node(
         self,
@@ -354,7 +368,7 @@ class ProgressTracker:
             # Update node progress
             if node_name in task.node_progress:
                 node_progress = task.node_progress[node_name]
-                node_progress.status = "running"
+                node_progress.status = ProgressStatus.RUNNING
                 node_progress.start_time = now
                 node_progress.current_operation = current_operation
                 node_progress.progress_percentage = 0.0
@@ -364,17 +378,15 @@ class ProgressTracker:
             task.current_operation = current_operation
             task.last_update = now
             
-            # Add event
-            event = ProgressEvent(
+            # Add event using new event model
+            event = NodeStartEvent(
                 correlation_id=correlation_id,
-                event_type=ProgressEventType.UPDATE,
                 timestamp=now,
                 node_name=node_name,
                 current_operation=current_operation,
-                elapsed_time=(now - task.start_time).total_seconds(),
-                status="running"
+                elapsed_time=(now - task.start_time).total_seconds()
             )
-            task.events.append(event)
+            self._add_event(task, event)
             
             # Recalculate overall progress
             await self._update_overall_progress(correlation_id)
@@ -396,7 +408,7 @@ class ProgressTracker:
             # Update node progress
             if node_name in task.node_progress:
                 node_progress = task.node_progress[node_name]
-                node_progress.status = "completed" if success else "failed"
+                node_progress.status = ProgressStatus.COMPLETED if success else ProgressStatus.FAILED
                 node_progress.end_time = now
                 node_progress.progress_percentage = 100.0 if success else node_progress.progress_percentage
                 
@@ -406,17 +418,22 @@ class ProgressTracker:
             
             task.last_update = now
             
-            # Add event
-            event = ProgressEvent(
+            # Calculate duration
+            duration = 0.0
+            if node_name in task.node_progress and task.node_progress[node_name].start_time:
+                duration = (now - task.node_progress[node_name].start_time).total_seconds()
+            
+            # Add event using new event model
+            event = NodeCompletionEvent(
                 correlation_id=correlation_id,
-                event_type=ProgressEventType.UPDATE,
                 timestamp=now,
                 node_name=node_name,
-                current_operation=f"{'Completed' if success else 'Failed'} {node_name}",
-                elapsed_time=(now - task.start_time).total_seconds(),
-                status="completed" if success else "failed"
+                status=ProgressStatus.COMPLETED if success else ProgressStatus.FAILED,
+                final_progress=100.0 if success else task.node_progress[node_name].progress_percentage,
+                duration=duration,
+                elapsed_time=(now - task.start_time).total_seconds()
             )
-            task.events.append(event)
+            self._add_event(task, event)
             
             # Recalculate overall progress
             await self._update_overall_progress(correlation_id)
@@ -453,18 +470,29 @@ class ProgressTracker:
             task.current_operation = current_operation
             task.last_update = now
             
-            # Add event
-            event = ProgressEvent(
-                correlation_id=correlation_id,
-                event_type=ProgressEventType.SUB_TASK_UPDATE if sub_task_name else ProgressEventType.UPDATE,
-                timestamp=now,
-                node_name=node_name,
-                current_operation=current_operation,
-                progress_percentage=progress_percentage,
-                elapsed_time=(now - task.start_time).total_seconds(),
-                metadata={"sub_task": sub_task_name} if sub_task_name else {}
-            )
-            task.events.append(event)
+            # Add event using new event model
+            if sub_task_name:
+                event = SubTaskUpdateEvent(
+                    correlation_id=correlation_id,
+                    timestamp=now,
+                    node_name=node_name,
+                    sub_task_name=sub_task_name,
+                    current_operation=current_operation,
+                    progress_percentage=sub_task_progress if sub_task_progress else progress_percentage,
+                    status=ProgressStatus.RUNNING,
+                    elapsed_time=(now - task.start_time).total_seconds()
+                )
+            else:
+                event = NodeUpdateEvent(
+                    correlation_id=correlation_id,
+                    timestamp=now,
+                    node_name=node_name,
+                    current_operation=current_operation,
+                    progress_percentage=progress_percentage,
+                    status=ProgressStatus.RUNNING,
+                    elapsed_time=(now - task.start_time).total_seconds()
+                )
+            self._add_event(task, event)
             
             # Recalculate overall progress
             await self._update_overall_progress(correlation_id)
@@ -486,7 +514,7 @@ class ProgressTracker:
             if step in task.node_progress:
                 node_progress = task.node_progress[step]
                 total_progress += node_progress.progress_percentage
-                if node_progress.status == "completed":
+                if node_progress.status == ProgressStatus.COMPLETED:
                     completed_nodes += 1
         
         # Calculate overall progress as percentage
@@ -495,11 +523,11 @@ class ProgressTracker:
         
         # Update status based on progress
         if completed_nodes == len(task.workflow_steps):
-            task.status = "completed"
-        elif any(node.status == "failed" for node in task.node_progress.values()):
-            task.status = "failed"
+            task.status = ProgressStatus.COMPLETED
+        elif any(node.status == ProgressStatus.FAILED for node in task.node_progress.values()):
+            task.status = ProgressStatus.FAILED
         else:
-            task.status = "running"
+            task.status = ProgressStatus.RUNNING
     
     async def aggregate_microservice_progress(
         self,
@@ -531,10 +559,10 @@ class ProgressTracker:
                 
                 # Update status based on progress
                 if progress_percentage >= 100.0:
-                    node_progress.status = "completed"
+                    node_progress.status = ProgressStatus.COMPLETED
                     node_progress.end_time = now
                 elif progress_percentage > 0:
-                    node_progress.status = "running"
+                    node_progress.status = ProgressStatus.RUNNING
                     if not node_progress.start_time:
                         node_progress.start_time = now
             
@@ -543,18 +571,19 @@ class ProgressTracker:
             task.current_operation = current_operation
             task.last_update = now
             
-            # Add event
-            event = ProgressEvent(
+            # Add event using new event model
+            event = MicroserviceUpdateEvent(
                 correlation_id=correlation_id,
-                event_type=ProgressEventType.UPDATE,
                 timestamp=now,
+                service_name=service_name,
                 node_name=node_name,
                 current_operation=current_operation,
                 progress_percentage=progress_percentage,
+                status=ProgressStatus.COMPLETED if progress_percentage >= 100.0 else ProgressStatus.RUNNING,
                 elapsed_time=(now - task.start_time).total_seconds(),
-                metadata={"service": service_name, "sub_tasks": sub_tasks}
+                sub_tasks=sub_tasks
             )
-            task.events.append(event)
+            self._add_event(task, event)
             
             # Recalculate overall progress
             await self._update_overall_progress(correlation_id)
@@ -573,7 +602,7 @@ class ProgressTracker:
                     node = task.node_progress[step]
                     workflow_progress.append({
                         "node_name": step,
-                        "status": node.status,
+                        "status": node.status.value,
                         "progress_percentage": node.progress_percentage,
                         "current_operation": node.current_operation,
                         "sub_tasks": node.sub_tasks,
@@ -586,7 +615,7 @@ class ProgressTracker:
                 "correlation_id": correlation_id,
                 "task_name": task.task_name,
                 "overall_progress": task.overall_progress,
-                "status": task.status,
+                "status": task.status.value,
                 "current_node": task.current_node,
                 "current_operation": task.current_operation,
                 "elapsed_time": task.elapsed_time,
@@ -594,7 +623,8 @@ class ProgressTracker:
                 "last_update": task.last_update.isoformat(),
                 "error_count": task.error_count,
                 "workflow_progress": workflow_progress,
-                "event_count": len(task.events)
+                "event_count": len(task.events),
+                "timeline": task.timeline.to_dict() if task.timeline else None
             }
 
 
