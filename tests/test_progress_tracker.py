@@ -10,6 +10,7 @@ from lib.progress_tracker import (
     ProgressEvent, 
     ProgressEventType, 
     TaskProgress,
+    NodeProgress,
     get_progress_tracker,
     shutdown_progress_tracker
 )
@@ -321,3 +322,200 @@ async def test_format_progress_log(tracker):
     
     formatted = tracker.format_progress_log(correlation_id, message)
     assert formatted == "[test-for] Test message"
+
+
+@pytest.mark.anyio
+async def test_start_task_with_workflow_steps(tracker):
+    """Test starting a task with custom workflow steps."""
+    correlation_id = "test-workflow-123"
+    workflow_steps = ["step1", "step2", "step3"]
+    
+    returned_id = await tracker.start_task(correlation_id, "Test Workflow", workflow_steps)
+    assert returned_id == correlation_id
+    
+    task = await tracker.get_task_progress(correlation_id)
+    assert task.workflow_steps == workflow_steps
+    assert len(task.node_progress) == 3
+    assert "step1" in task.node_progress
+    assert "step2" in task.node_progress
+    assert "step3" in task.node_progress
+    
+    # All nodes should be initialized as pending
+    for step in workflow_steps:
+        assert task.node_progress[step].status == "pending"
+        assert task.node_progress[step].progress_percentage == 0.0
+
+
+@pytest.mark.anyio
+async def test_start_and_complete_node(tracker):
+    """Test starting and completing a node."""
+    correlation_id = await tracker.start_task(task_name="Node Test", workflow_steps=["test_node"])
+    
+    # Start the node
+    await tracker.start_node(correlation_id, "test_node", "Starting test node")
+    
+    task = await tracker.get_task_progress(correlation_id)
+    node = task.node_progress["test_node"]
+    assert node.status == "running"
+    assert node.start_time is not None
+    assert node.current_operation == "Starting test node"
+    assert task.current_node == "test_node"
+    
+    # Complete the node
+    await tracker.complete_node(correlation_id, "test_node", success=True)
+    
+    task = await tracker.get_task_progress(correlation_id)
+    node = task.node_progress["test_node"]
+    assert node.status == "completed"
+    assert node.end_time is not None
+    assert node.progress_percentage == 100.0
+    assert task.status == "completed"  # Should update overall status
+    assert task.overall_progress == 100.0
+
+
+@pytest.mark.anyio
+async def test_update_node_progress(tracker):
+    """Test updating node progress."""
+    correlation_id = await tracker.start_task(task_name="Node Progress Test", workflow_steps=["test_node"])
+    
+    # Update node progress
+    await tracker.update_node_progress(
+        correlation_id, 
+        "test_node", 
+        50.0, 
+        "Halfway through",
+        "sub_task_1",
+        75.0
+    )
+    
+    task = await tracker.get_task_progress(correlation_id)
+    node = task.node_progress["test_node"]
+    assert node.progress_percentage == 50.0
+    assert node.current_operation == "Halfway through"
+    assert node.sub_tasks["sub_task_1"] == 75.0
+    assert task.overall_progress == 50.0
+
+
+@pytest.mark.anyio
+async def test_aggregate_microservice_progress(tracker):
+    """Test aggregating progress from microservices."""
+    correlation_id = await tracker.start_task(task_name="Microservice Test", workflow_steps=["service_node"])
+    
+    # Simulate microservice progress update
+    service_progress = {
+        "node_name": "service_node",
+        "progress_percentage": 75.0,
+        "current_operation": "Processing data",
+        "sub_tasks": {
+            "processing": 80.0,
+            "validation": 70.0
+        }
+    }
+    
+    await tracker.aggregate_microservice_progress(correlation_id, "test_service", service_progress)
+    
+    task = await tracker.get_task_progress(correlation_id)
+    node = task.node_progress["service_node"]
+    assert node.progress_percentage == 75.0
+    assert node.current_operation == "Processing data"
+    assert node.sub_tasks["processing"] == 80.0
+    assert node.sub_tasks["validation"] == 70.0
+    assert node.status == "running"
+    assert task.overall_progress == 75.0
+
+
+@pytest.mark.anyio
+async def test_get_aggregated_progress(tracker):
+    """Test getting aggregated progress view."""
+    workflow_steps = ["step1", "step2", "step3"]
+    correlation_id = await tracker.start_task(task_name="Aggregation Test", workflow_steps=workflow_steps)
+    
+    # Update progress for different steps
+    await tracker.start_node(correlation_id, "step1", "Starting step 1")
+    await tracker.complete_node(correlation_id, "step1", success=True)
+    await tracker.start_node(correlation_id, "step2", "Working on step 2")
+    await tracker.update_node_progress(correlation_id, "step2", 60.0, "Progressing step 2")
+    
+    # Get aggregated progress
+    aggregated = await tracker.get_aggregated_progress(correlation_id)
+    
+    assert aggregated is not None
+    assert aggregated["correlation_id"] == correlation_id
+    assert aggregated["task_name"] == "Aggregation Test"
+    assert aggregated["current_node"] == "step2"
+    assert aggregated["current_operation"] == "Progressing step 2"
+    assert len(aggregated["workflow_progress"]) == 3
+    
+    # Check workflow progress details
+    step1_progress = next(p for p in aggregated["workflow_progress"] if p["node_name"] == "step1")
+    assert step1_progress["status"] == "completed"
+    assert step1_progress["progress_percentage"] == 100.0
+    
+    step2_progress = next(p for p in aggregated["workflow_progress"] if p["node_name"] == "step2")
+    assert step2_progress["status"] == "running"
+    assert step2_progress["progress_percentage"] == 60.0
+    assert step2_progress["current_operation"] == "Progressing step 2"
+    
+    step3_progress = next(p for p in aggregated["workflow_progress"] if p["node_name"] == "step3")
+    assert step3_progress["status"] == "pending"
+    assert step3_progress["progress_percentage"] == 0.0
+
+
+@pytest.mark.anyio
+async def test_overall_progress_calculation(tracker):
+    """Test overall progress calculation across multiple nodes."""
+    workflow_steps = ["step1", "step2", "step3"]
+    correlation_id = await tracker.start_task(task_name="Progress Calc Test", workflow_steps=workflow_steps)
+    
+    # Update progress for different steps
+    await tracker.update_node_progress(correlation_id, "step1", 100.0, "Step 1 complete")
+    await tracker.update_node_progress(correlation_id, "step2", 50.0, "Step 2 halfway")
+    await tracker.update_node_progress(correlation_id, "step3", 0.0, "Step 3 not started")
+    
+    task = await tracker.get_task_progress(correlation_id)
+    # Overall progress should be (100 + 50 + 0) / 3 = 50.0
+    assert task.overall_progress == 50.0
+    assert task.status == "running"
+
+
+@pytest.mark.anyio
+async def test_failure_handling(tracker):
+    """Test handling of node failures."""
+    correlation_id = await tracker.start_task(task_name="Failure Test", workflow_steps=["failing_node"])
+    
+    # Complete node with failure
+    await tracker.complete_node(correlation_id, "failing_node", success=False)
+    
+    task = await tracker.get_task_progress(correlation_id)
+    node = task.node_progress["failing_node"]
+    assert node.status == "failed"
+    assert node.error_count == 1
+    assert task.error_count == 1
+    assert task.status == "failed"
+
+
+@pytest.mark.anyio
+async def test_microservice_completion(tracker):
+    """Test microservice progress completing a node."""
+    correlation_id = await tracker.start_task(task_name="Microservice Completion Test", workflow_steps=["service_node"])
+    
+    # Simulate microservice completing its work
+    service_progress = {
+        "node_name": "service_node",
+        "progress_percentage": 100.0,
+        "current_operation": "Completed processing",
+        "sub_tasks": {
+            "processing": 100.0,
+            "validation": 100.0
+        }
+    }
+    
+    await tracker.aggregate_microservice_progress(correlation_id, "test_service", service_progress)
+    
+    task = await tracker.get_task_progress(correlation_id)
+    node = task.node_progress["service_node"]
+    assert node.status == "completed"
+    assert node.progress_percentage == 100.0
+    assert node.end_time is not None
+    assert task.status == "completed"
+    assert task.overall_progress == 100.0
