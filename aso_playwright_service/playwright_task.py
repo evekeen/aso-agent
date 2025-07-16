@@ -7,7 +7,10 @@ from dataclasses import dataclass
 from playwright.async_api import async_playwright, Page, BrowserContext, Browser
 from dotenv import load_dotenv
 
-goto_timeout = 10
+goto_timeout = 30
+action_timeout = 45
+connect_timeout = 45
+keyword_timeout = 45
 
 
 @dataclass
@@ -45,7 +48,6 @@ class PlaywrightASOTask:
         browsercat_url = 'wss://api.browsercat.com/connect'
         
         max_retries = 2
-        timeout_seconds = 45
         
         for attempt in range(max_retries + 1):
             try:
@@ -55,15 +57,15 @@ class PlaywrightASOTask:
                     playwright.chromium.connect(
                         browsercat_url,
                         headers={'Api-Key': self.browsercat_api_key},
-                        timeout=timeout_seconds * 1000
+                        timeout=connect_timeout * 1000
                     ),
-                    timeout=timeout_seconds
+                    timeout=connect_timeout
                 )
                 print("🌐 Connected to BrowserCat")
                 return
                 
             except asyncio.TimeoutError:
-                print(f"⏰ BrowserCat connection timeout after {timeout_seconds}s")
+                print(f"⏰ BrowserCat connection timeout after {connect_timeout}s")
                 if attempt < max_retries:
                     print("🔄 Retrying connection...")
                     await asyncio.sleep(5)
@@ -90,7 +92,6 @@ class PlaywrightASOTask:
         print("🔍 Opening new page...")
         
         max_retries = 2
-        page_timeout = 30
         
         for attempt in range(max_retries + 1):
             try:
@@ -98,13 +99,13 @@ class PlaywrightASOTask:
                 
                 self.page = await asyncio.wait_for(
                     self.context.new_page(),
-                    timeout=page_timeout
+                    timeout=goto_timeout
                 )
                 print("✅ Page created successfully")
                 return
                 
             except asyncio.TimeoutError:
-                print(f"⏰ Page creation timeout after {page_timeout}s")
+                print(f"⏰ Page creation timeout after {goto_timeout}s")
                 if attempt < max_retries:
                     print("🔄 Retrying page creation...")
                     await asyncio.sleep(3)
@@ -160,7 +161,7 @@ class PlaywrightASOTask:
         print("🔍 Waiting for page to load...")
         await asyncio.wait_for(
             self.page.wait_for_load_state('domcontentloaded'),
-            timeout=30
+            timeout=goto_timeout
         )
         
         print("🔍 Checking login status...")
@@ -256,9 +257,9 @@ class PlaywrightASOTask:
         
         await asyncio.wait_for(
             self.page.wait_for_load_state('domcontentloaded'),
-            timeout=30
+            timeout=goto_timeout
         )
-        await self.page.wait_for_timeout(4000)
+        await self.page.wait_for_timeout(2000)
     
     async def _delete_all_keywords(self):
         """Delete all existing keywords."""
@@ -311,7 +312,7 @@ class PlaywrightASOTask:
     async def _extract_keyword_metrics(self) -> Dict[str, KeywordMetrics]:
         """Extract keyword difficulty and traffic metrics from the page."""
         try:
-            await self.page.wait_for_selector('table', timeout=30000)
+            await self.page.wait_for_selector('table', timeout=keyword_timeout)
             paginator = self.page.locator('.p-paginator-rpp-options').first
             if not await paginator.is_visible():
                 print("❌ Paginator not found, cannot extract metrics")
