@@ -36,10 +36,10 @@ class State(MessagesState):
 async def collect_app_ideas(state: dict) -> dict:
     """Extract app ideas from user messages using LLM-based content extraction."""
     from langchain_openai import ChatOpenAI
-    from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+    from langchain_core.messages import SystemMessage, HumanMessage
     from langgraph.errors import NodeInterrupt
     from pydantic import BaseModel, Field
-    from typing import List, Optional
+    from typing import Optional
     
     messages = state.get("messages", [])
     
@@ -96,31 +96,33 @@ async def collect_app_ideas(state: dict) -> dict:
         # System prompt for app idea assessment
         system_prompt = """You are an expert at assessing whether user messages contain clear app ideas for ASO (App Store Optimization) analysis.
 
-Your task is to:
-1. Assess whether the user's message contains specific, analyzable app ideas
-2. Extract clear app ideas if they exist
-3. Identify when clarification is needed for meaningful analysis
+        Your task is to:
+        1. Assess whether the user's message contains specific, analyzable app ideas
+        2. Extract clear app ideas if they exist
+        3. Identify when clarification is needed for meaningful analysis
+        
+        Do not think of new ideas, just takes exactly what was provided by the user. It must be one idea if user only talked abot on idea.
 
-HIGH CONFIDENCE (7-10): Clear, specific app ideas that can be immediately analyzed
-- "Analyze fitness tracking apps" → ["fitness tracker", "workout planner"]
-- "Sleep and meditation apps for anxiety" → ["meditation app", "sleep tracker", "anxiety relief app"]
-- "I want to research cooking apps with meal planning" → ["recipe app", "meal planner"]
+        HIGH CONFIDENCE (7-10): Clear, specific app ideas that can be immediately analyzed
+        - "Analyze fitness tracking apps" → ["fitness tracker", "workout planner"]
+        - "Sleep and meditation apps for anxiety" → ["meditation app", "sleep tracker", "anxiety relief app"]
+        - "I want to research cooking apps with meal planning" → ["recipe app", "meal planner"]
 
-MEDIUM CONFIDENCE (4-6): General direction but needs more specificity
-- "I'm interested in health apps" → Needs clarification: which type of health apps?
-- "Apps for my business" → Needs clarification: what type of business?
-- "Something with social features" → Needs clarification: what purpose/category?
+        MEDIUM CONFIDENCE (4-6): General direction but needs more specificity
+        - "I'm interested in health apps" → Needs clarification: which type of health apps?
+        - "Apps for my business" → Needs clarification: what type of business?
+        - "Something with social features" → Needs clarification: what purpose/category?
 
-LOW CONFIDENCE (1-3): Vague, unclear, or no app ideas mentioned
-- "Hello" → Needs clarification about app analysis intent
-- "What can you do?" → Needs clarification about specific app ideas
-- "I have an idea" → Needs clarification about the actual idea
+        LOW CONFIDENCE (1-3): Vague, unclear, or no app ideas mentioned
+        - "Hello" → Needs clarification about app analysis intent
+        - "What can you do?" → Needs clarification about specific app ideas
+        - "I have an idea" → Needs clarification about the actual idea
 
-Rules for follow-up questions:
-- Be specific and helpful
-- Offer examples in the question
-- Guide toward actionable app categories
-- Keep questions conversational and encouraging"""
+        Rules for follow-up questions:
+        - Be specific and helpful
+        - Offer examples in the question
+        - Guide toward actionable app categories
+        - Keep questions conversational and encouraging"""
         
         # Assess the user's message
         update_node_progress(50.0, "Analyzing user message for app ideas")

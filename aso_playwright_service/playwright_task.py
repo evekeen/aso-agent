@@ -8,7 +8,7 @@ from playwright.async_api import async_playwright, Page, BrowserContext, Browser
 from dotenv import load_dotenv
 from progress_reporter import get_progress_reporter, with_progress_tracking
 
-goto_timeout = 30
+goto_timeout = 45
 action_timeout = 45
 connect_timeout = 45
 keyword_timeout = 45
