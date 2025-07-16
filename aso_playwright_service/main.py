@@ -14,6 +14,7 @@ from models import (
     KeywordMetrics
 )
 from playwright_task import execute_keyword_analysis
+from progress_reporter import get_progress_reporter
 
 
 class TaskQueue:
@@ -24,7 +25,7 @@ class TaskQueue:
         self.worker_running = False
         self.current_task = None
     
-    async def add_task(self, keywords: list) -> dict:
+    async def add_task(self, keywords: list, correlation_id: str = None) -> dict:
         """Add a task to the queue and wait for completion."""
         task_id = f"task_{int(time.time() * 1000)}"
         future = asyncio.Future()
@@ -32,6 +33,7 @@ class TaskQueue:
         await self.queue.put({
             'id': task_id,
             'keywords': keywords,
+            'correlation_id': correlation_id,
             'future': future
         })
         
@@ -53,14 +55,15 @@ class TaskQueue:
                 
                 task_id = task['id']
                 keywords = task['keywords']
+                correlation_id = task.get('correlation_id')
                 future = task['future']
                 
                 print(f"⚙️ Processing task {task_id} with {len(keywords)} keywords...")
                 start_time = time.time()
                 
                 try:
-                    # Execute the task
-                    result = await execute_keyword_analysis(keywords)
+                    # Execute the task with progress reporting
+                    result = await execute_keyword_analysis(keywords, correlation_id)
                     
                     processing_time = time.time() - start_time
                     
@@ -190,7 +193,8 @@ async def analyze_keywords(request: AnalyzeKeywordsRequest):
         print(f"📨 Received request for {len(request.keywords)} keywords")
         
         # Add task to queue and wait for completion
-        result = await task_queue.add_task(request.keywords)
+        correlation_id = request.correlation_id if hasattr(request, 'correlation_id') else None
+        result = await task_queue.add_task(request.keywords, correlation_id)
         
         if result.get('status') == 'error':
             raise HTTPException(

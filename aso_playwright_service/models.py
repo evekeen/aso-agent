@@ -1,7 +1,7 @@
 """Request/response models for ASO Playwright service."""
 
 from pydantic import BaseModel
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 class KeywordMetrics(BaseModel):
@@ -13,6 +13,7 @@ class KeywordMetrics(BaseModel):
 class AnalyzeKeywordsRequest(BaseModel):
     """Request model for keyword analysis."""
     keywords: List[str]
+    correlation_id: Optional[str] = None
 
 
 class AnalyzeKeywordsResponse(BaseModel):

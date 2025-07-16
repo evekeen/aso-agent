@@ -6,6 +6,7 @@ from typing import Dict, List
 from dataclasses import dataclass
 from playwright.async_api import async_playwright, Page, BrowserContext, Browser
 from dotenv import load_dotenv
+from progress_reporter import get_progress_reporter, with_progress_tracking
 
 goto_timeout = 30
 action_timeout = 45
@@ -23,11 +24,13 @@ class KeywordMetrics:
 class PlaywrightASOTask:
     """Task executor for ASO Mobile automation with fresh browser per task."""
     
-    def __init__(self):
+    def __init__(self, correlation_id: str = None):
         load_dotenv()
         self.context = None
         self.page = None
         self.browser = None
+        self.correlation_id = correlation_id
+        self.progress_reporter = None
         
         # Load credentials
         self.aso_email = os.getenv('ASO_EMAIL')
@@ -42,6 +45,7 @@ class PlaywrightASOTask:
         if not self.browsercat_api_key:
             raise ValueError("BROWSER_CAT_API_KEY environment variable is required")
     
+    @with_progress_tracking("browser_connection", "Connecting to BrowserCat")
     async def _connect_to_browsercat(self, playwright):
         """Connect to BrowserCat with timeout and retry."""
         print("🌐 Connecting to BrowserCat...")
@@ -80,6 +84,7 @@ class PlaywrightASOTask:
                 else:
                     raise Exception(f"Failed to connect to BrowserCat after {max_retries + 1} attempts: {e}")
     
+    @with_progress_tracking("page_creation", "Creating browser page")
     async def _create_page(self):
         """Create browser context and page."""
         print("🔍 Creating browser context...")
@@ -151,6 +156,7 @@ class PlaywrightASOTask:
                 else:
                     raise Exception(f"Failed {description} after {max_retries + 1} attempts: {e}")
     
+    @with_progress_tracking("login", "Logging into ASO Mobile")
     async def _login_if_needed(self):
         """Login to ASO Mobile if not already logged in."""
         await self._navigate_with_retry(
@@ -193,6 +199,7 @@ class PlaywrightASOTask:
             print(f"❌ Login failed: {e}")
             return False
     
+    @with_progress_tracking("menu_setup", "Setting up navigation menu")
     async def _expand_left_menu(self):
         """Expand the left menu if collapsed."""
         await self.page.wait_for_selector('app-toggle-menu-button', timeout=10000)
@@ -220,6 +227,7 @@ class PlaywrightASOTask:
             print(f"❌ Failed to expand menu: {e}")
             return False
     
+    @with_progress_tracking("app_selection", "Selecting target app")
     async def _select_app(self):
         """Select the specified app if not already selected."""
         try:
@@ -248,6 +256,7 @@ class PlaywrightASOTask:
             print(f"❌ Failed to select app: {e}")
             return False
     
+    @with_progress_tracking("navigation", "Navigating to keyword monitor")
     async def _navigate_to_keyword_monitor(self):
         """Navigate to keyword monitor page."""
         await self._navigate_with_retry(
@@ -261,6 +270,7 @@ class PlaywrightASOTask:
         )
         await self.page.wait_for_timeout(2000)
     
+    @with_progress_tracking("cleanup", "Cleaning up existing keywords")
     async def _delete_all_keywords(self):
         """Delete all existing keywords."""
         try:
@@ -285,6 +295,7 @@ class PlaywrightASOTask:
             print(f"❌ Failed to delete keywords: {e}")
             return False
     
+    @with_progress_tracking("keyword_addition", "Adding keywords to monitor")
     async def _add_keywords(self, keywords: List[str]):
         """Add new keywords to monitor."""
         try:
@@ -309,6 +320,7 @@ class PlaywrightASOTask:
             print(f"❌ Failed to add keywords: {e}")
             return False
     
+    @with_progress_tracking("metrics_extraction", "Extracting keyword metrics")
     async def _extract_keyword_metrics(self) -> Dict[str, KeywordMetrics]:
         """Extract keyword difficulty and traffic metrics from the page."""
         try:
@@ -421,44 +433,62 @@ class PlaywrightASOTask:
         """Execute the complete keyword analysis workflow."""
         print(f"🔍 Starting ASO analysis for {len(keywords)} keywords...")
         
+        # Initialize progress reporter if correlation ID is provided
+        if self.correlation_id:
+            self.progress_reporter = get_progress_reporter(self.correlation_id)
+        
         try:
-            async with async_playwright() as playwright:
-                # Connect to BrowserCat
-                await self._connect_to_browsercat(playwright)
-                
-                # Create page
-                await self._create_page()
-                
-                # Login
-                await self._login_if_needed()
-                
-                # Expand menu
-                await self._expand_left_menu()
-                
-                # Select app
-                await self._select_app()
-                
-                # Navigate to keyword monitor
-                await self._navigate_to_keyword_monitor()
-                
-                # Delete existing keywords
-                await self._delete_all_keywords()
-                await self._delete_all_keywords()
-                
-                # Add new keywords
-                await self._add_keywords(keywords)
-                
-                # Extract metrics
-                return await self._extract_keyword_metrics()
+            if self.progress_reporter:
+                async with self.progress_reporter:
+                    return await self._execute_workflow(keywords)
+            else:
+                return await self._execute_workflow(keywords)
                 
         except Exception as e:
             print(f"❌ Workflow failed: {e}")
             return {}
         finally:
             await self.cleanup()
+    
+    async def _execute_workflow(self, keywords: List[str]) -> Dict[str, KeywordMetrics]:
+        """Execute the core workflow with clean business logic."""
+        async with async_playwright() as playwright:
+            # Connect to BrowserCat
+            await self._connect_to_browsercat(playwright)
+            
+            # Create page
+            await self._create_page()
+            
+            # Login
+            await self._login_if_needed()
+            
+            # Expand menu
+            await self._expand_left_menu()
+            
+            # Select app
+            await self._select_app()
+            
+            # Navigate to keyword monitor
+            await self._navigate_to_keyword_monitor()
+            
+            # Delete existing keywords
+            await self._delete_all_keywords()
+            await self._delete_all_keywords()  # Double cleanup for safety
+            
+            # Add new keywords
+            await self._add_keywords(keywords)
+            
+            # Extract metrics
+            metrics = await self._extract_keyword_metrics()
+            
+            # Report keyword processing results if progress reporter is available
+            if self.progress_reporter:
+                await self.progress_reporter.report_keywords_processed(metrics, len(keywords))
+            
+            return metrics
 
 
-async def execute_keyword_analysis(keywords: List[str]) -> Dict[str, KeywordMetrics]:
+async def execute_keyword_analysis(keywords: List[str], correlation_id: str = None) -> Dict[str, KeywordMetrics]:
     """Execute keyword analysis task."""
-    task = PlaywrightASOTask()
+    task = PlaywrightASOTask(correlation_id)
     return await task.execute(keywords)
