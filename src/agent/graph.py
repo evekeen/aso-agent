@@ -9,6 +9,7 @@ from lib.keywords import generate_keywords
 from lib.sensor_tower import get_apps_revenue
 from lib.appstore import search_app_store
 from lib.aso_store import get_aso_store, ASONamespaces
+from .progress_middleware import with_progress_tracking, update_node_progress, ProgressContext
 
 
 class Configuration(TypedDict):
@@ -28,25 +29,32 @@ class State(MessagesState):
     difficulty_by_keyword: dict[str, float]
     filtered_keywords: list[str]
     final_report: dict
+    correlation_id: str = ""
 
 
+@with_progress_tracking("collect_app_ideas", "Collecting app ideas for ASO analysis")
 def collect_app_ideas(state: dict) -> dict:
     return {"ideas": ["golf shot tracer", "snoring tracker"]}
 
 
+@with_progress_tracking("generate_initial_keywords", "Generating initial keywords using LLM")
 def generate_initial_keywords(state: dict) -> dict:
     """LangGraph node to generate initial keywords for app ideas using LLM."""
     ideas = state.get("ideas", [])
     if not ideas:
         raise ValueError("No app ideas provided for keyword generation.")
     
+    update_node_progress(25.0, "Analyzing app ideas for keyword generation")
     initial_keywords = generate_keywords(ideas, keywords_len=20)
+    
     if not initial_keywords:
         raise RuntimeError("No keywords were generated for the provided app ideas.")
     
+    update_node_progress(100.0, f"Generated keywords for {len(initial_keywords)} app ideas")
     return {"initial_keywords": initial_keywords}
 
 
+@with_progress_tracking("search_apps_for_keywords", "Searching App Store for relevant apps")
 async def search_apps_for_keywords(state: dict) -> dict:
     """
     LangGraph node to search App Store for apps using generated keywords.
@@ -72,6 +80,7 @@ async def search_apps_for_keywords(state: dict) -> dict:
         raise ValueError("No keywords found to search for apps.")
     
     print(f"Searching App Store for {len(unique_keywords)} unique keywords...")
+    update_node_progress(10.0, f"Starting App Store search for {len(unique_keywords)} keywords")
     
     apps_by_keyword = {}
     apps_data_by_keyword = {}
@@ -81,47 +90,50 @@ async def search_apps_for_keywords(state: dict) -> dict:
     store = get_aso_store()
     
     # Search for apps using each keyword
-    for keyword in unique_keywords:
-        # Check store first
-        item = await store.aget(ASONamespaces.keyword_apps(), keyword.lower())
-        cached_app_ids = item.value["app_ids"] if item else []
-        
-        if cached_app_ids:
-            print(f"Using cached apps for keyword: '{keyword}' ({len(cached_app_ids)} apps)")
-            apps_by_keyword[keyword] = cached_app_ids
-            # We'll need to fetch full app data when needed for difficulty analysis
-            apps_data_by_keyword[keyword] = []  # Will be populated later if needed
-        else:
-            try:
-                print(f"Searching for apps with keyword: '{keyword}'")
-                
-                # Search App Store for this keyword
-                apps = await search_app_store(keyword, country="us", num=20)
-                
-                if not apps:
-                    print(f"No apps found for keyword: '{keyword}'")
+    async with ProgressContext("search_apps_for_keywords", len(unique_keywords)) as progress:
+        for i, keyword in enumerate(unique_keywords):
+            await progress.update(i, f"Processing keyword: '{keyword}'")
+            
+            # Check store first
+            item = await store.aget(ASONamespaces.keyword_apps(), keyword.lower())
+            cached_app_ids = item.value["app_ids"] if item else []
+            
+            if cached_app_ids:
+                print(f"Using cached apps for keyword: '{keyword}' ({len(cached_app_ids)} apps)")
+                apps_by_keyword[keyword] = cached_app_ids
+                # We'll need to fetch full app data when needed for difficulty analysis
+                apps_data_by_keyword[keyword] = []  # Will be populated later if needed
+            else:
+                try:
+                    print(f"Searching for apps with keyword: '{keyword}'")
+                    
+                    # Search App Store for this keyword
+                    apps = await search_app_store(keyword, country="us", num=20)
+                    
+                    if not apps:
+                        print(f"No apps found for keyword: '{keyword}'")
+                        apps_by_keyword[keyword] = []
+                        apps_data_by_keyword[keyword] = []
+                    else:
+                        # Extract app IDs from AppstoreApp objects
+                        app_ids = [app.app_id for app in apps]
+                        apps_by_keyword[keyword] = app_ids
+                        apps_data_by_keyword[keyword] = apps
+                        
+                        # Cache the keyword-app associations
+                        await store.aput(
+                            ASONamespaces.keyword_apps(),
+                            keyword.lower(),
+                            {"app_ids": app_ids}
+                        )
+                        
+                        print(f"Found {len(app_ids)} apps for '{keyword}': {app_ids[:3]}{'...' if len(app_ids) > 3 else ''}")
+                        
+                except Exception as e:
+                    failed_keywords.append(keyword)
+                    print(f"Failed to search for keyword '{keyword}': {e}")
                     apps_by_keyword[keyword] = []
                     apps_data_by_keyword[keyword] = []
-                else:
-                    # Extract app IDs from AppstoreApp objects
-                    app_ids = [app.app_id for app in apps]
-                    apps_by_keyword[keyword] = app_ids
-                    apps_data_by_keyword[keyword] = apps
-                    
-                    # Cache the keyword-app associations
-                    await store.aput(
-                        ASONamespaces.keyword_apps(),
-                        keyword.lower(),
-                        {"app_ids": app_ids}
-                    )
-                    
-                    print(f"Found {len(app_ids)} apps for '{keyword}': {app_ids[:3]}{'...' if len(app_ids) > 3 else ''}")
-                    
-            except Exception as e:
-                failed_keywords.append(keyword)
-                print(f"Failed to search for keyword '{keyword}': {e}")
-                apps_by_keyword[keyword] = []
-                apps_data_by_keyword[keyword] = []
     
     # Calculate statistics
     total_apps = sum(len(app_ids) for app_ids in apps_by_keyword.values())
@@ -146,6 +158,7 @@ async def search_apps_for_keywords(state: dict) -> dict:
     return {"apps_by_keyword": apps_by_keyword, "apps_data_by_keyword": apps_data_by_keyword}
 
 
+@with_progress_tracking("get_keyword_total_market_size", "Analyzing market size for keywords")
 async def get_keyword_total_market_size(state: dict) -> dict:
     """
     LangGraph node to analyze market size for keywords by fetching app revenues.
@@ -171,6 +184,7 @@ async def get_keyword_total_market_size(state: dict) -> dict:
         raise ValueError("No app IDs found for market size analysis.")
     
     print(f"Analyzing market size for {len(all_app_ids)} apps across {len(apps_by_keyword)} keywords...")
+    update_node_progress(20.0, f"Fetching revenue data for {len(all_app_ids)} apps")
     
     try:
         # Fetch revenue data for all apps
@@ -220,6 +234,7 @@ async def get_keyword_total_market_size(state: dict) -> dict:
         raise RuntimeError(f"Market size analysis failed: {e}")
 
 
+@with_progress_tracking("filter_keywords_by_market_size", "Filtering keywords by market size threshold")
 def filter_keywords_by_market_size(state: dict) -> Command[Literal["analyze_keyword_difficulty", "generate_final_report"]]:
     """
     Filter keywords by market size threshold before expensive difficulty analysis.
@@ -236,6 +251,7 @@ def filter_keywords_by_market_size(state: dict) -> Command[Literal["analyze_keyw
     
     # Filter keywords with market size > $50K
     threshold = 50000
+    update_node_progress(50.0, f"Filtering {len(revenue_by_keyword)} keywords by ${threshold:,} threshold")
     filtered_keywords = [
         keyword for keyword, revenue in revenue_by_keyword.items() 
         if revenue >= threshold
@@ -275,6 +291,7 @@ def filter_keywords_by_market_size(state: dict) -> Command[Literal["analyze_keyw
         )
 
 
+@with_progress_tracking("analyze_keyword_difficulty", "Analyzing keyword difficulty using ASO Mobile metrics")
 async def analyze_keyword_difficulty(state: dict) -> dict:
     """
     LangGraph node to analyze keyword difficulty using ASO Mobile metrics via microservice.
@@ -301,6 +318,7 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
     
     # Check which keywords already have cached metrics
     print(f"🔍 Checking database for cached keyword metrics...")
+    update_node_progress(10.0, f"Checking cache for {len(filtered_keywords)} keywords")
     unanalyzed_keywords = await store.get_unanalyzed_keywords(filtered_keywords)
     
     difficulty_by_keyword = {}
@@ -329,6 +347,7 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
     # Only analyze unanalyzed keywords
     if unanalyzed_keywords:
         print(f"🔍 Fetching ASO metrics for {len(unanalyzed_keywords)} new keywords using microservice...")
+        update_node_progress(40.0, f"Fetching ASO metrics for {len(unanalyzed_keywords)} keywords")
         
         failed_keywords = []
         
@@ -405,6 +424,7 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
     }
 
 
+@with_progress_tracking("generate_final_report", "Generating comprehensive ASO analysis report")
 async def generate_final_report(state: dict) -> dict:
     """
     Generate ASO analysis report structured for agent consumption.
@@ -420,6 +440,7 @@ async def generate_final_report(state: dict) -> dict:
     initial_keywords = state.get("initial_keywords", {})
     
     print(f"\n📊 Generating Final ASO Analysis Report for Agent Consumption...")
+    update_node_progress(20.0, f"Generating structured report for {len(ideas)} app ideas")
     
     # Generate structured report for each app idea
     app_analysis = {}
