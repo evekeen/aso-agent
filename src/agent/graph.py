@@ -9,7 +9,7 @@ from lib.keywords import generate_keywords
 from lib.sensor_tower import get_apps_revenue
 from lib.appstore import search_app_store
 from lib.aso_store import get_aso_store, ASONamespaces
-from .progress_middleware import with_progress_tracking, update_node_progress, ProgressContext
+from src.agent.progress_middleware import with_progress_tracking, update_node_progress, ProgressContext
 
 
 class Configuration(TypedDict):
@@ -536,6 +536,25 @@ async def generate_final_report(state: dict) -> dict:
                 print(f"    - '{keyword}': ${data['market_size_usd']:,.0f} (difficulty: {data['difficulty_rating']})")
     
     return {"final_report": final_report}
+
+
+test_graph = (
+    StateGraph(State, config_schema=Configuration)
+    .add_node("collect_app_ideas", collect_app_ideas)
+    .add_node("generate_initial_keywords", generate_initial_keywords)
+    .add_node("search_apps_for_keywords", search_apps_for_keywords)
+    .add_node("get_keyword_total_market_size", get_keyword_total_market_size)
+    .add_node("filter_keywords_by_market_size", filter_keywords_by_market_size)
+    .add_node("analyze_keyword_difficulty", analyze_keyword_difficulty)
+    .add_node("generate_final_report", generate_final_report)
+    .add_edge("__start__", "collect_app_ideas")
+    .add_edge("collect_app_ideas", "generate_initial_keywords")
+    .add_edge("generate_initial_keywords", "search_apps_for_keywords")
+    .add_edge("search_apps_for_keywords", "get_keyword_total_market_size")
+    .add_edge("get_keyword_total_market_size", "filter_keywords_by_market_size")
+    .add_edge("analyze_keyword_difficulty", "generate_final_report")
+    .compile(name="ASO Researcher")
+)
 
 
 graph = (
