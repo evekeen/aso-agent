@@ -353,15 +353,12 @@ def display_overview_tab(app_ideas: Dict[str, Any], final_report: Dict[str, Any]
     # Summary metrics
     metadata = final_report.get("analysis_metadata", {})
     
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("App Ideas", len(app_ideas))
     with col2:
         st.metric("Keywords Analyzed", metadata.get("total_keywords_analyzed", 0))
     with col3:
-        total_market = metadata.get("total_market_size_usd", 0)
-        st.metric("Total Market Size", f"${total_market:,.0f}")
-    with col4:
         st.metric("Difficulty Analyses", metadata.get("difficulty_analyses_completed", 0))
     
     # App ideas with best performing keywords
