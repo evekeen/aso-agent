@@ -489,7 +489,8 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
         
         try:
             # Call the microservice for unanalyzed keywords only
-            keyword_metrics = await analyze_keywords_via_service(unanalyzed_keywords)
+            correlation_id = state.get("correlation_id", None)
+            keyword_metrics = await analyze_keywords_via_service(unanalyzed_keywords, correlation_id)
             
             if not keyword_metrics:
                 print("⚠️ No metrics returned from ASO service")

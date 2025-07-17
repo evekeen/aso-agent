@@ -21,7 +21,7 @@ class ProgressReporter:
             main_service_url: URL of the main service progress endpoint
         """
         self.correlation_id = correlation_id
-        self.main_service_url = main_service_url or os.getenv('MAIN_SERVICE_URL', 'http://localhost:8000')
+        self.main_service_url = main_service_url or os.getenv('MAIN_SERVICE_URL', 'http://localhost:8080')
         self.session = None
         
     async def __aenter__(self):
@@ -57,7 +57,7 @@ class ProgressReporter:
                 **data
             }
             
-            endpoint = f"{self.main_service_url}/api/progress/update"
+            endpoint = f"{self.main_service_url}/progress/update"
             
             async with self.session.post(
                 endpoint,

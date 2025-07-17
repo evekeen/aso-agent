@@ -193,7 +193,7 @@ async def analyze_keywords(request: AnalyzeKeywordsRequest):
         print(f"📨 Received request for {len(request.keywords)} keywords")
         
         # Add task to queue and wait for completion
-        correlation_id = request.correlation_id if hasattr(request, 'correlation_id') else None
+        correlation_id = request.correlation_id
         result = await task_queue.add_task(request.keywords, correlation_id)
         
         if result.get('status') == 'error':

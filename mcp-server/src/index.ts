@@ -2,6 +2,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { registerASOTools } from "./aso-tools.js";
 
+// Logging utility for MCP servers (uses stderr to avoid interfering with JSON-RPC on stdout)
+const logger = {
+  info: (message: string, ...args: any[]) => console.error(`[INFO] ${message}`, ...args),
+  error: (message: string, ...args: any[]) => console.error(`[ERROR] ${message}`, ...args),
+  warn: (message: string, ...args: any[]) => console.error(`[WARN] ${message}`, ...args),
+  debug: (message: string, ...args: any[]) => console.error(`[DEBUG] ${message}`, ...args)
+};
+
 const server = new McpServer({
   name: "aso-agent",
   version: "1.0.0",
@@ -11,6 +19,9 @@ const server = new McpServer({
     prompts: {}
   }
 });
+
+// Log when tools are registered
+logger.info("📋 Registering ASO tools...");
 
 // Register ASO analysis tools
 registerASOTools(server);
@@ -120,11 +131,37 @@ Focus on Top Performers and Good keywords for your ASO strategy.`
 
 async function main() {
   const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("ASO Agent MCP Server running on stdio");
+  
+  try {
+    logger.info("🚀 Starting ASO Agent MCP Server...");
+    logger.info("📋 Registered tools: analyze-app-ideas, check-aso-service");
+    logger.info("📋 Registered prompts: aso-analysis-guide, keyword-difficulty-guide");
+    
+    // Add process monitoring
+    process.stdin.on('data', (data) => {
+      logger.debug("📥 Received stdin data:", data.toString().substring(0, 100));
+    });
+    
+    process.stdout.on('data', (data) => {
+      logger.debug("📤 Sent stdout data:", data.toString().substring(0, 100));
+    });
+    
+    await server.connect(transport);
+    logger.info("✅ ASO Agent MCP Server running on stdio");
+    logger.info("🔗 Connected to transport, ready to receive requests");
+    
+    // Keep the process alive and log periodically
+    setInterval(() => {
+      logger.debug("💓 Server heartbeat - still running");
+    }, 30000); // Every 30 seconds
+    
+  } catch (error) {
+    logger.error("❌ Failed to start MCP Server:", error);
+    throw error;
+  }
 }
 
 main().catch((error) => {
-  console.error("Fatal error in main():", error);
+  logger.error("💥 Fatal error in main():", error);
   process.exit(1);
 });

@@ -3,6 +3,14 @@ import { z } from "zod";
 import { ASOAPIClient } from './api-client.js';
 import { ASOAnalysisRequest, ASOAnalysisResponse, KeywordMetrics, ProgressUpdate, IntermediateResult, ASOAnalysisReport } from './types.js';
 
+// Logging utility for MCP servers (uses stderr to avoid interfering with JSON-RPC on stdout)
+const logger = {
+  info: (message: string, ...args: any[]) => console.error(`[INFO] ${message}`, ...args),
+  error: (message: string, ...args: any[]) => console.error(`[ERROR] ${message}`, ...args),
+  warn: (message: string, ...args: any[]) => console.error(`[WARN] ${message}`, ...args),
+  debug: (message: string, ...args: any[]) => console.error(`[DEBUG] ${message}`, ...args)
+};
+
 // Get configuration from environment
 const ASO_SERVICE_URL = process.env.ASO_SERVICE_URL || 'http://localhost:8080';
 const ASO_AUTH_TOKEN = process.env.ASO_AUTH_TOKEN || process.env.AUTH_SECRET;
@@ -14,7 +22,7 @@ export function registerASOTools(server: McpServer) {
   server.registerTool(
     "analyze-app-ideas",
     {
-      title: "ASO Analysis with Streaming",
+      title: "ASO Analysis with Progress Updates",
       description: "Analyze app ideas for ASO opportunities with real-time progress updates. Provides keyword difficulty, traffic metrics, and market size analysis.",
       inputSchema: {
         message: z.string().describe("Describe the app ideas to analyze (e.g., 'fitness tracking apps', 'meditation apps for anxiety')"),
@@ -26,7 +34,18 @@ export function registerASOTools(server: McpServer) {
         thread_id: z.string().optional().describe("Thread ID for conversation context")
       }
     },
-    async ({ message, model, market_threshold, keywords_per_idea, stream, user_id, thread_id }) => {
+    async ({ message, model, market_threshold, keywords_per_idea, stream, user_id, thread_id }, { sendNotification }) => {
+      logger.info("🔧 ASO Tool called with params:", {
+        message: message.substring(0, 100) + "...",
+        model,
+        market_threshold,
+        keywords_per_idea,
+        stream,
+        user_id,
+        thread_id,
+        hasNotificationHandler: !!sendNotification
+      });
+      
       const request: ASOAnalysisRequest = {
         message,
         model,
@@ -37,8 +56,10 @@ export function registerASOTools(server: McpServer) {
       };
 
       // Check service health first
+      logger.info("🏥 Checking ASO service health...");
       const isHealthy = await client.checkHealth();
       if (!isHealthy) {
+        logger.error("❌ ASO service is not healthy");
         return {
           content: [{
             type: "text",
@@ -46,23 +67,65 @@ export function registerASOTools(server: McpServer) {
           }]
         };
       }
+      logger.info("✅ ASO service is healthy");
 
       try {
         if (stream) {
           // Use streaming for real-time updates
+          logger.info("🌊 Starting streaming analysis...");
           let finalReport: ASOAnalysisReport | null = null;
           let streamedContent = "🚀 **Starting ASO Analysis**\n\nAnalyzing app ideas with real-time progress updates...\n\n";
 
           for await (const event of client.streamAnalysis(request)) {
+            logger.debug("📦 Received streaming event:", {
+              type: event.type,
+              content: typeof event.content === 'object' ? JSON.stringify(event.content).substring(0, 200) + "..." : event.content
+            });
             switch (event.type) {
               case "progress":
                 const progress = event.content as ProgressUpdate;
                 const stepProgress = Math.round(progress.progress_percentage);
+                
+                // Send MCP progress notification
+                const progressMessage = `📊 ${progress.node_name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}: ${progress.status_message} (${stepProgress}%)`;
+                logger.info("📤 Sending progress notification:", progressMessage);
+                
+                try {
+                  await sendNotification({
+                    method: "notifications/message",
+                    params: {
+                      level: "info",
+                      data: progressMessage
+                    }
+                  });
+                  logger.info("✅ Progress notification sent successfully");
+                } catch (notificationError) {
+                  logger.error("❌ Failed to send progress notification:", notificationError);
+                }
+                
                 streamedContent += `📊 **${progress.node_name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}** - ${progress.status_message} (${stepProgress}%)\n`;
                 break;
 
               case "intermediate":
                 const intermediate = event.content as IntermediateResult;
+                
+                // Send intermediate results as progress notifications
+                const intermediateMessage = `📝 Intermediate result: ${intermediate.result_type.replace(/_/g, ' ')}`;
+                logger.info("📤 Sending intermediate notification:", intermediateMessage);
+                
+                try {
+                  await sendNotification({
+                    method: "notifications/message",
+                    params: {
+                      level: "info",
+                      data: intermediateMessage
+                    }
+                  });
+                  logger.info("✅ Intermediate notification sent successfully");
+                } catch (notificationError) {
+                  logger.error("❌ Failed to send intermediate notification:", notificationError);
+                }
+                
                 streamedContent += formatIntermediateResult(intermediate);
                 break;
 
@@ -88,6 +151,22 @@ export function registerASOTools(server: McpServer) {
             }
           }
 
+          // Send final progress notification
+          logger.info("📤 Sending final notification: ASO Analysis Complete");
+          
+          try {
+            await sendNotification({
+              method: "notifications/message",
+              params: {
+                level: "info",
+                data: "✅ ASO Analysis Complete"
+              }
+            });
+            logger.info("✅ Final notification sent successfully");
+          } catch (notificationError) {
+            logger.error("❌ Failed to send final notification:", notificationError);
+          }
+
           // Format final results
           if (finalReport) {
             const formattedReport = formatAnalysisReport(finalReport, market_threshold || 50000);
@@ -95,6 +174,8 @@ export function registerASOTools(server: McpServer) {
           }
 
           streamedContent += "\n\n✅ **ASO Analysis Complete**\n\nAnalysis finished successfully!";
+
+          logger.info("📊 Analysis completed, returning results. Content length:", streamedContent.length);
 
           return {
             content: [{
@@ -116,7 +197,23 @@ export function registerASOTools(server: McpServer) {
           };
         }
       } catch (error) {
+        logger.error("💥 Analysis failed with error:", error);
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        
+        // Try to send error notification
+        try {
+          await sendNotification({
+            method: "notifications/message",
+            params: {
+              level: "error",
+              data: `❌ Analysis failed: ${errorMessage}`
+            }
+          });
+          logger.info("📤 Error notification sent");
+        } catch (notificationError) {
+          logger.error("❌ Failed to send error notification:", notificationError);
+        }
+        
         return {
           content: [{
             type: "text",
@@ -136,7 +233,9 @@ export function registerASOTools(server: McpServer) {
       inputSchema: {}
     },
     async () => {
+      logger.info("🏥 Health check tool called");
       const isHealthy = await client.checkHealth();
+      logger.info("🏥 Health check result:", isHealthy);
       
       return {
         content: [{

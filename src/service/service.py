@@ -378,6 +378,68 @@ async def get_history(thread_id: str) -> ChatHistory:
     )
 
 
+@router.post("/progress/update")
+async def update_progress(progress_data: dict):
+    """
+    Receive progress updates from microservices and relay them to the progress tracker.
+    
+    This endpoint receives progress updates from microservices (like playwright service)
+    and forwards them to the main progress tracking system.
+    """
+    try:
+        correlation_id = progress_data.get("correlation_id")
+        if not correlation_id:
+            logger.warning("Progress update received without correlation_id")
+            return {"status": "error", "message": "Missing correlation_id"}
+        
+        # Get the progress tracker for this correlation_id
+        from src.lib.progress_tracker import get_progress_tracker
+        tracker = get_progress_tracker()
+        
+        # Convert microservice progress data to progress tracker format
+        event_type = progress_data.get("event_type", "microservice_update")
+        
+        if event_type == "step_progress":
+            # Step progress update
+            await tracker.aggregate_microservice_progress(
+                correlation_id=correlation_id,
+                service_name=progress_data.get("service_name", "unknown"),
+                service_progress={
+                    "node_name": progress_data.get("step_name", "unknown"),
+                    "progress_percentage": progress_data.get("progress_percentage", 0.0),
+                    "current_operation": progress_data.get("current_operation", ""),
+                    "sub_tasks": {}
+                }
+            )
+        elif event_type == "error":
+            # Error update
+            await tracker.report_error(
+                correlation_id=correlation_id,
+                error_message=progress_data.get("error_message", "Unknown error"),
+                error_type=progress_data.get("error_type", "RuntimeError"),
+                node_name=progress_data.get("step_name", "unknown")
+            )
+        elif event_type == "keywords_processed":
+            # Keywords processed update
+            await tracker.aggregate_microservice_progress(
+                correlation_id=correlation_id,
+                service_name=progress_data.get("service_name", "unknown"),
+                service_progress={
+                    "node_name": "keyword_processing",
+                    "progress_percentage": progress_data.get("progress_percentage", 0.0),
+                    "current_operation": progress_data.get("current_operation", ""),
+                    "sub_tasks": {}
+                }
+            )
+        
+        logger.info(f"Progress update relayed for correlation_id: {correlation_id}")
+        return {"status": "success", "message": "Progress update received"}
+        
+    except Exception as e:
+        logger.error(f"Error processing progress update: {e}")
+        return {"status": "error", "message": str(e)}
+
+
 # Include the router
 app.include_router(router)
 

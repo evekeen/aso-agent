@@ -58,11 +58,13 @@ class ASOServiceClient:
         except Exception as e:
             return {"error": str(e)}
     
-    async def analyze_keywords(self, keywords: List[str]) -> Dict[str, KeywordMetrics]:
+    async def analyze_keywords(self, keywords: List[str], correlation_id: str = None) -> Dict[str, KeywordMetrics]:
         """Analyze keywords using the service."""
         session = await self._get_session()
         
         payload = {"keywords": keywords}
+        if correlation_id:
+            payload["correlation_id"] = correlation_id
         
         try:
             print(f"📤 Sending {len(keywords)} keywords to ASO service...")
@@ -113,7 +115,7 @@ async def get_aso_service_client() -> ASOServiceClient:
     return _client
 
 
-async def analyze_keywords_via_service(keywords: List[str]) -> Dict[str, KeywordMetrics]:
+async def analyze_keywords_via_service(keywords: List[str], correlation_id: str = None) -> Dict[str, KeywordMetrics]:
     """Analyze keywords using the ASO service."""
     client = await get_aso_service_client()
     
@@ -124,4 +126,4 @@ async def analyze_keywords_via_service(keywords: List[str]) -> Dict[str, Keyword
         return {}
     
     # Analyze keywords
-    return await client.analyze_keywords(keywords)
+    return await client.analyze_keywords(keywords, correlation_id)
