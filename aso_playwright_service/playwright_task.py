@@ -8,10 +8,10 @@ from playwright.async_api import async_playwright, Page, BrowserContext, Browser
 from dotenv import load_dotenv
 from progress_reporter import get_progress_reporter, with_progress_tracking
 
-goto_timeout = 45
-action_timeout = 45
-connect_timeout = 45
-keyword_timeout = 45
+goto_timeout = 60
+action_timeout = 60
+connect_timeout = 60
+keyword_timeout = 60
 
 
 @dataclass
@@ -135,7 +135,7 @@ class PlaywrightASOTask:
                 
                 await asyncio.wait_for(
                     self.page.goto(url),
-                    timeout=goto_timeout
+                    timeout=goto_timeout * 1000
                 )
                 print(f"✅ {description} successful")
                 return
@@ -324,8 +324,14 @@ class PlaywrightASOTask:
     async def _extract_keyword_metrics(self) -> Dict[str, KeywordMetrics]:
         """Extract keyword difficulty and traffic metrics from the page."""
         try:
-            await self.page.wait_for_selector('table', timeout=keyword_timeout)
-            await self.page.wait_for_selector('.p-paginator-rpp-options', timeout=keyword_timeout)
+            try:
+                await self.page.wait_for_selector('table', timeout=keyword_timeout * 1000)
+            except Exception as e:
+                print(f"❌ Table not found, reloading the page: {e}")
+                await self.page.reload()
+                await self.page.wait_for_selector('table', timeout=keyword_timeout * 1000)
+
+            await self.page.wait_for_selector('.p-paginator-rpp-options', timeout=keyword_timeout * 1000)
             paginator = self.page.locator('.p-paginator-rpp-options').first
             if not await paginator.is_visible():
                 print("❌ Paginator not found, cannot extract metrics")
@@ -334,7 +340,7 @@ class PlaywrightASOTask:
             await self.page.wait_for_timeout(2000)
             
             option_200_selector = '.p-dropdown-items-wrapper .p-dropdown-item:has-text("200")'
-            await self.page.wait_for_selector(option_200_selector, timeout=keyword_timeout)            
+            await self.page.wait_for_selector(option_200_selector, timeout=keyword_timeout * 1000)            
             option_200 = self.page.locator(option_200_selector)
             await option_200.click()            
             
