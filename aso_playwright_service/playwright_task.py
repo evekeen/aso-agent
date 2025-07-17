@@ -213,7 +213,7 @@ class PlaywrightASOTask:
     async def _login_if_needed(self):
         """Login to ASO Mobile if not already logged in."""
         await self._navigate_with_retry(
-            "https://app.asomobile.net/monitor/list-view",
+            "https://app.asomobile.net/sign-in",
             "Login navigation"
         )
         
@@ -416,6 +416,17 @@ class PlaywrightASOTask:
             if not self.page or self.page.is_closed():
                 print("❌ Page is closed, cannot continue extraction")
                 return {}
+            
+            try:
+                await self.page.locator('.app-show-graph-switch input').click()
+            except Exception as e:
+                await self._take_debug_screenshot("graph_switch_failed", e)
+                print(f"❌ Failed to turn off graph toggle: {e}")
+                
+            #scroll page to the bottmom to ensure all data is loaded
+            print("🔍 Scrolling to bottom to load all data...")
+            await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(2)
             
             try: 
                 await self.page.wait_for_selector('.p-paginator-rpp-options', timeout=keyword_timeout * 1000)
