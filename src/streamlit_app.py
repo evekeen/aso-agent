@@ -138,7 +138,7 @@ async def main() -> None:
             
             # Display ASO-specific results
             if message.custom_data.get("final_report"):
-                display_aso_results(message.custom_data["final_report"])
+                display_aso_results(message.custom_data["final_report"], market_threshold)
     
     # Chat input
     if user_input := st.chat_input("Describe the app ideas you want to analyze (e.g., 'fitness tracking apps' or 'productivity tools for students')"):
@@ -241,7 +241,7 @@ async def handle_streaming_response(
         
         # Display final results
         if final_report:
-            display_aso_results(final_report)
+            display_aso_results(final_report, market_threshold)
         
         # Clear progress display
         progress_container.empty()
@@ -277,7 +277,7 @@ async def handle_single_response(
             
             # Display results if available
             if response.custom_data.get("final_report"):
-                display_aso_results(response.custom_data["final_report"])
+                display_aso_results(response.custom_data["final_report"], market_threshold)
                 
         except Exception as e:
             st.error(f"Error during ASO analysis: {e}")
@@ -327,7 +327,7 @@ def display_intermediate_results(container, data: Dict[str, Any]) -> None:
                 st.dataframe(df, use_container_width=True)
 
 
-def display_aso_results(final_report: Dict[str, Any]) -> None:
+def display_aso_results(final_report: Dict[str, Any], market_threshold: int = 50000) -> None:
     """Display comprehensive ASO analysis results."""
     st.subheader("📊 ASO Analysis Results")
     
@@ -337,19 +337,16 @@ def display_aso_results(final_report: Dict[str, Any]) -> None:
         return
     
     # Create tabs for different views
-    tab1, tab2, tab3 = st.tabs(["📈 Overview", "🎯 Keywords", "📊 Charts"])
+    tab1, tab2 = st.tabs(["📈 Overview", "🎯 Keywords"])
     
     with tab1:
-        display_overview_tab(app_ideas, final_report)
+        display_overview_tab(app_ideas, final_report, market_threshold)
     
     with tab2:
-        display_keywords_tab(app_ideas)
-    
-    with tab3:
-        display_charts_tab(app_ideas)
+        display_keywords_tab(app_ideas, market_threshold)
 
 
-def display_overview_tab(app_ideas: Dict[str, Any], final_report: Dict[str, Any]) -> None:
+def display_overview_tab(app_ideas: Dict[str, Any], final_report: Dict[str, Any], market_threshold: int) -> None:
     """Display overview of all app ideas."""
     st.subheader("App Ideas Overview")
     
@@ -367,27 +364,64 @@ def display_overview_tab(app_ideas: Dict[str, Any], final_report: Dict[str, Any]
     with col4:
         st.metric("Difficulty Analyses", metadata.get("difficulty_analyses_completed", 0))
     
-    # App ideas table
-    overview_data = []
+    # App ideas with best performing keywords
     for idea, analysis in app_ideas.items():
         keywords_data = analysis.get("keywords", {})
-        # Filter out weak keywords (0.0 difficulty) for display
+        # Filter out weak keywords and find best performing ones
         viable_keywords = {k: v for k, v in keywords_data.items() if v.get('difficulty_rating', 0) > 0.0}
-        overview_data.append({
-            "App Idea": idea.title(),
-            "Market Size ($)": f"${analysis.get('best_possible_market_size_usd', 0):,.2f}",
-            "Keywords Analyzed": len(viable_keywords),
-            "Best Difficulty": calculate_best_difficulty(viable_keywords),
-            "Best Traffic": calculate_best_traffic(viable_keywords),
-            "Opportunity Score": calculate_opportunity_score_for_idea(viable_keywords)
-        })
-    
-    if overview_data:
-        df = pd.DataFrame(overview_data)
-        st.dataframe(df, use_container_width=True)
+        
+        # Find best performing keywords based on market threshold and difficulty
+        best_keywords = []
+        for keyword, data in viable_keywords.items():
+            difficulty = data.get('difficulty_rating', 0)
+            traffic = data.get('traffic_rating', 0)
+            market_size = data.get('market_size_usd', 0)
+            
+            # Filter by criteria: market size meets threshold, good traffic, reasonable difficulty
+            if market_size >= market_threshold and traffic >= 200 and difficulty < 3.0:
+                best_keywords.append({
+                    'keyword': keyword,
+                    'difficulty': difficulty,
+                    'traffic': traffic,
+                    'market_size': market_size,
+                    'opportunity_score': traffic / max(difficulty, 1)  # Higher is better
+                })
+        
+        # Sort by opportunity score (traffic/difficulty ratio) descending
+        best_keywords.sort(key=lambda x: x['opportunity_score'], reverse=True)
+        
+        # Display app idea section
+        st.subheader(f"🎯 {idea.title()}")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Best Market Size", f"${analysis.get('best_possible_market_size_usd', 0):,.0f}")
+        with col2:
+            st.metric("Total Keywords", len(keywords_data))
+        with col3:
+            st.metric("Viable Keywords", len(viable_keywords))
+        
+        # Show top 3 best performing keywords
+        if best_keywords:
+            st.write("**🏆 Top Performing Keywords:**")
+            for i, kw in enumerate(best_keywords[:3], 1):
+                with st.expander(f"#{i} {kw['keyword']}", expanded=True):
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Difficulty", f"{kw['difficulty']:.1f}/10")
+                    with col2:
+                        st.metric("Traffic", f"{kw['traffic']:.0f}/100")
+                    with col3:
+                        st.metric("Market Size", f"${kw['market_size']:,.0f}")
+                    with col4:
+                        st.metric("Opportunity Score", f"{kw['opportunity_score']:.1f}")
+        else:
+            st.warning(f"No keywords meet the criteria (Market Size ≥ ${market_threshold:,}, Traffic ≥ 200, Difficulty < 3.0)")
+        
+        st.divider()
 
 
-def display_keywords_tab(app_ideas: Dict[str, Any]) -> None:
+def display_keywords_tab(app_ideas: Dict[str, Any], market_threshold: int) -> None:
     """Display detailed keyword analysis."""
     st.subheader("Keyword Analysis")
     
@@ -410,25 +444,41 @@ def display_keywords_tab(app_ideas: Dict[str, Any]) -> None:
             st.warning(f"No keywords available for {selected_idea}")
             return
         
-        # Convert to DataFrame for better display, filtering out weak keywords (0.0 difficulty)
+        # Convert to DataFrame for detailed analysis - show ALL keywords analyzed
         keywords_data = []
         for keyword, data in keywords.items():
             difficulty = data.get('difficulty_rating', 0)
-            # Skip weak keywords with 0.0 difficulty
-            if difficulty == 0.0:
-                continue
+            traffic = data.get('traffic_rating', 0)
             market_size = data.get('market_size_usd', 0)
+            
+            # Show status for each keyword based on market threshold and difficulty (0-10 scale)
+            if difficulty == 0.0:
+                status = "❌ Weak"
+            elif market_size >= market_threshold and traffic >= 200 and difficulty < 3.0:
+                status = "🏆 Top Performer"
+            elif market_size >= market_threshold and traffic >= 100 and difficulty < 4.0:
+                status = "✅ Good"
+            elif market_size < market_threshold:
+                status = "💸 Low Market"
+            elif difficulty >= 4.0:
+                status = "🔴 Too Difficult"
+            elif traffic < 100:
+                status = "📉 Low Traffic"
+            else:
+                status = "⚠️ Low Potential"
+            
             keywords_data.append({
                 "Keyword": keyword,
+                "Status": status,
                 "Difficulty": difficulty,
-                "Traffic": data.get('traffic_rating', 0),
+                "Traffic": traffic,
                 "Market Size ($)": f"${market_size:,.2f}",
                 "Market Size (Raw)": market_size,  # For sorting
-                "Opportunity Score": calculate_opportunity_score(data)
+                "Opportunity Score": calculate_opportunity_score(data) if difficulty > 0 else 0
             })
         
         if not keywords_data:
-            st.warning(f"No viable keywords found for {selected_idea} (all keywords had 0.0 difficulty)")
+            st.warning(f"No keywords found for {selected_idea}")
             return
         
         df = pd.DataFrame(keywords_data)
@@ -451,100 +501,6 @@ def display_keywords_tab(app_ideas: Dict[str, Any]) -> None:
             key=f"download_csv_{selected_idea}"
         )
 
-
-def display_charts_tab(app_ideas: Dict[str, Any]) -> None:
-    """Display charts and visualizations."""
-    st.subheader("Analysis Charts")
-    
-    # Prepare data for charts, filtering out weak keywords (0.0 difficulty)
-    all_keywords = []
-    for idea, analysis in app_ideas.items():
-        keywords = analysis.get("keywords", {})
-        for keyword, data in keywords.items():
-            difficulty = data.get('difficulty_rating', 0)
-            # Skip weak keywords with 0.0 difficulty
-            if difficulty == 0.0:
-                continue
-            all_keywords.append({
-                "App Idea": idea.title(),
-                "Keyword": keyword,
-                "Difficulty": difficulty,
-                "Traffic": data.get('traffic_rating', 0),
-                "Market Size": data.get('market_size_usd', 0)
-            })
-    
-    if not all_keywords:
-        st.warning("No keyword data available for charts.")
-        return
-    
-    df = pd.DataFrame(all_keywords)
-    
-    # Market size by app idea
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("Market Size by App Idea")
-        market_by_idea = df.groupby("App Idea")["Market Size"].max().reset_index()
-        fig1 = px.bar(
-            market_by_idea,
-            x="App Idea",
-            y="Market Size",
-            title="Best Market Opportunity per App Idea",
-            labels={"Market Size": "Market Size ($)"}
-        )
-        fig1.update_layout(xaxis_tickangle=45)
-        st.plotly_chart(fig1, use_container_width=True)
-    
-    with col2:
-        st.subheader("Difficulty vs Traffic")
-        fig2 = px.scatter(
-            df,
-            x="Difficulty",
-            y="Traffic",
-            size="Market Size",
-            color="App Idea",
-            hover_data=["Keyword"],
-            title="Keyword Difficulty vs Traffic Analysis",
-            labels={
-                "Difficulty": "Difficulty Score (0-100)",
-                "Traffic": "Traffic Score (0-100)"
-            }
-        )
-        
-        # Add quadrant lines
-        fig2.add_hline(y=50, line_dash="dash", line_color="gray", opacity=0.5)
-        fig2.add_vline(x=50, line_dash="dash", line_color="gray", opacity=0.5)
-        
-        # Add quadrant labels
-        fig2.add_annotation(x=25, y=75, text="High Traffic<br>Low Difficulty", showarrow=False, bgcolor="lightgreen", opacity=0.7)
-        fig2.add_annotation(x=75, y=75, text="High Traffic<br>High Difficulty", showarrow=False, bgcolor="lightyellow", opacity=0.7)
-        fig2.add_annotation(x=25, y=25, text="Low Traffic<br>Low Difficulty", showarrow=False, bgcolor="lightblue", opacity=0.7)
-        fig2.add_annotation(x=75, y=25, text="Low Traffic<br>High Difficulty", showarrow=False, bgcolor="lightcoral", opacity=0.7)
-        
-        st.plotly_chart(fig2, use_container_width=True)
-    
-    # Opportunity matrix
-    st.subheader("Keyword Opportunity Matrix")
-    
-    # Calculate opportunity scores
-    df["Opportunity Score"] = df.apply(
-        lambda row: (row["Traffic"] / max(row["Difficulty"], 1)) * (row["Market Size"] / 1000), 
-        axis=1
-    )
-    
-    # Show top opportunities
-    top_opportunities = df.nlargest(10, "Opportunity Score")
-    
-    fig3 = px.bar(
-        top_opportunities,
-        x="Keyword",
-        y="Opportunity Score",
-        color="App Idea",
-        title="Top 10 Keyword Opportunities",
-        hover_data=["Difficulty", "Traffic", "Market Size"]
-    )
-    fig3.update_layout(xaxis_tickangle=45)
-    st.plotly_chart(fig3, use_container_width=True)
 
 
 def calculate_avg_difficulty(keywords: Dict[str, Any]) -> float:
