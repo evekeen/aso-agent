@@ -53,16 +53,22 @@ class PlaywrightASOTask:
         
         max_retries = 2
         
+        connection_task = None
         for attempt in range(max_retries + 1):
             try:
                 print(f"🌐 Connection attempt {attempt + 1}/{max_retries + 1}...")
                 
-                self.browser = await asyncio.wait_for(
+                # Create connection task
+                connection_task = asyncio.create_task(
                     playwright.chromium.connect(
                         browsercat_url,
                         headers={'Api-Key': self.browsercat_api_key},
                         timeout=connect_timeout * 1000
-                    ),
+                    )
+                )
+                
+                self.browser = await asyncio.wait_for(
+                    connection_task,
                     timeout=connect_timeout
                 )
                 print("🌐 Connected to BrowserCat")
@@ -70,6 +76,14 @@ class PlaywrightASOTask:
                 
             except asyncio.TimeoutError:
                 print(f"⏰ BrowserCat connection timeout after {connect_timeout}s")
+                # Cancel the connection task to prevent "Future exception was never retrieved" warning
+                if connection_task and not connection_task.done():
+                    connection_task.cancel()
+                    try:
+                        await connection_task
+                    except asyncio.CancelledError:
+                        pass
+                
                 if attempt < max_retries:
                     print("🔄 Retrying connection...")
                     await asyncio.sleep(5)
@@ -78,6 +92,14 @@ class PlaywrightASOTask:
                     
             except Exception as e:
                 print(f"❌ BrowserCat connection failed: {e}")
+                # Cancel the connection task if it exists
+                if connection_task and not connection_task.done():
+                    connection_task.cancel()
+                    try:
+                        await connection_task
+                    except asyncio.CancelledError:
+                        pass
+                
                 if attempt < max_retries:
                     print("🔄 Retrying connection...")
                     await asyncio.sleep(5)
@@ -324,27 +346,51 @@ class PlaywrightASOTask:
     async def _extract_keyword_metrics(self) -> Dict[str, KeywordMetrics]:
         """Extract keyword difficulty and traffic metrics from the page."""
         try:
+            # Check if page is still available
+            if not self.page or self.page.is_closed():
+                print("❌ Page is closed, cannot extract metrics")
+                return {}
+            
             try:
                 await self.page.wait_for_selector('table', timeout=keyword_timeout * 1000)
             except Exception as e:
-                print(f"❌ Table not found, reloading the page: {e}")
-                await self.page.reload()
-                await self.page.wait_for_selector('table', timeout=keyword_timeout * 1000)
+                print(f"❌ Table not found, checking if page is still available: {e}")
+                # Check if the page is still available before attempting reload
+                if not self.page or self.page.is_closed():
+                    print("❌ Page is closed, cannot reload")
+                    return {}
+                
+                try:
+                    print("🔄 Reloading page to ensure table is available...")
+                    await self.page.reload()
+                    await self.page.wait_for_selector('table', timeout=keyword_timeout * 1000)
+                    print("✅ Page reloaded successfully, the table is available now")
+                except Exception as reload_e:
+                    print(f"❌ Failed to reload page or find table: {reload_e}")
+                    return {}
 
-            await self.page.wait_for_selector('.p-paginator-rpp-options', timeout=keyword_timeout * 1000)
-            paginator = self.page.locator('.p-paginator-rpp-options').first
-            if not await paginator.is_visible():
-                print("❌ Paginator not found, cannot extract metrics")
+            # Check if page is still available before continuing
+            if not self.page or self.page.is_closed():
+                print("❌ Page is closed, cannot continue extraction")
                 return {}
-            await paginator.click()            
-            await self.page.wait_for_timeout(2000)
             
-            option_200_selector = '.p-dropdown-items-wrapper .p-dropdown-item:has-text("200")'
-            await self.page.wait_for_selector(option_200_selector, timeout=keyword_timeout * 1000)            
-            option_200 = self.page.locator(option_200_selector)
-            await option_200.click()            
+            try: 
+                await self.page.wait_for_selector('.p-paginator-rpp-options', timeout=keyword_timeout * 1000)
+                paginator = self.page.locator('.p-paginator-rpp-options').first
+                if not await paginator.is_visible():
+                    print("❌ Paginator not found, cannot extract metrics")
+                    return {}
+                await paginator.click()            
+                await self.page.wait_for_timeout(2000)
             
-            await self.page.wait_for_timeout(2000)
+                option_200_selector = '.p-dropdown-items-wrapper .p-dropdown-item:has-text("200")'
+                await self.page.wait_for_selector(option_200_selector, timeout=keyword_timeout * 1000)            
+                option_200 = self.page.locator(option_200_selector)
+                await option_200.click()            
+                
+                await self.page.wait_for_timeout(2000)
+            except Exception as e:
+                print(f"❌ Failed to set paginator to 200 items, continue with default pagination: {e}")
             
             print("🔍 Extracting keyword metrics...")
             
