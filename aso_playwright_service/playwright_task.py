@@ -325,6 +325,7 @@ class PlaywrightASOTask:
         """Extract keyword difficulty and traffic metrics from the page."""
         try:
             await self.page.wait_for_selector('table', timeout=keyword_timeout)
+            await self.page.wait_for_selector('.p-paginator-rpp-options', timeout=keyword_timeout)
             paginator = self.page.locator('.p-paginator-rpp-options').first
             if not await paginator.is_visible():
                 print("❌ Paginator not found, cannot extract metrics")
