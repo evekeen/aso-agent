@@ -4,6 +4,8 @@ import asyncio
 import os
 from typing import Dict, List
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from playwright.async_api import async_playwright, Page, BrowserContext, Browser
 from dotenv import load_dotenv
 from progress_reporter import get_progress_reporter, with_progress_tracking
@@ -38,12 +40,39 @@ class PlaywrightASOTask:
         self.aso_app_name = os.getenv('ASO_APP_NAME', 'Bedtime Fan')
         self.browsercat_api_key = os.getenv('BROWSER_CAT_API_KEY')
         
+        # Screenshot configuration
+        self.screenshots_dir = Path('screenshots')
+        self.screenshots_dir.mkdir(exist_ok=True)
+        
         if not self.aso_email:
             raise ValueError("ASO_EMAIL environment variable is required")
         if not self.aso_password:
             raise ValueError("ASO_PASSWORD environment variable is required")
         if not self.browsercat_api_key:
             raise ValueError("BROWSER_CAT_API_KEY environment variable is required")
+    
+    async def _take_debug_screenshot(self, context: str, error: Exception = None) -> str:
+        """Take a screenshot for debugging purposes."""
+        try:
+            # Don't attempt screenshot if page is not available
+            if not self.page or self.page.is_closed():
+                print(f"⚠️ Cannot take screenshot for {context}: Page not available")
+                return None
+                
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            screenshot_name = f"debug_{context}_{timestamp}.png"
+            screenshot_path = self.screenshots_dir / screenshot_name
+            
+            await self.page.screenshot(path=screenshot_path, full_page=True)
+            
+            print(f"📸 Debug screenshot saved: {screenshot_path}")
+            if error:
+                print(f"   Error context: {error}")
+            
+            return str(screenshot_path)
+        except Exception as screenshot_error:
+            print(f"❌ Failed to take screenshot: {screenshot_error}")
+            return None
     
     @with_progress_tracking("browser_connection", "Connecting to BrowserCat")
     async def _connect_to_browsercat(self, playwright):
@@ -163,6 +192,7 @@ class PlaywrightASOTask:
                 return
                 
             except asyncio.TimeoutError:
+                await self._take_debug_screenshot(f"navigation_timeout_{description.lower().replace(' ', '_')}", None)
                 print(f"⏰ {description} timeout after {goto_timeout}s")
                 if attempt < max_retries:
                     print(f"🔄 Retrying {description}...")
@@ -171,6 +201,7 @@ class PlaywrightASOTask:
                     raise Exception(f"Failed {description} after {max_retries + 1} attempts (timeout)")
                     
             except Exception as e:
+                await self._take_debug_screenshot(f"navigation_failed_{description.lower().replace(' ', '_')}", e)
                 print(f"❌ {description} failed: {e}")
                 if attempt < max_retries:
                     print(f"🔄 Retrying {description}...")
@@ -218,14 +249,19 @@ class PlaywrightASOTask:
                 print("✅ Login completed")
                 return True
         except Exception as e:
+            await self._take_debug_screenshot("login_failed", e)
             print(f"❌ Login failed: {e}")
             return False
     
     @with_progress_tracking("menu_setup", "Setting up navigation menu")
     async def _expand_left_menu(self):
         """Expand the left menu if collapsed."""
-        await self.page.wait_for_selector('app-toggle-menu-button', timeout=action_timeout * 1000)
-        print("✅ Dashboard loaded")
+        try:
+            await self.page.wait_for_selector('app-toggle-menu-button', timeout=action_timeout * 1000)
+            print("✅ Dashboard loaded")
+        except Exception as e:
+            await self._take_debug_screenshot("dashboard_load_failed", e)
+            raise e
                 
         try:
             print("🔍 Checking left menu state...")
@@ -237,6 +273,7 @@ class PlaywrightASOTask:
                     print("ℹ️ Left menu already expanded")
                     return True                
                 else:
+                    await self._take_debug_screenshot("menu_toggle_not_found", e)
                     raise Exception("Left menu toggle not found")
             
             menu_toggle = self.page.locator(menu_selector)
@@ -246,6 +283,7 @@ class PlaywrightASOTask:
             print("✅ Expanded left menu")
             return True
         except Exception as e:
+            await self._take_debug_screenshot("menu_expand_failed", e)
             print(f"❌ Failed to expand menu: {e}")
             return False
     
@@ -275,6 +313,7 @@ class PlaywrightASOTask:
             return True
             
         except Exception as e:
+            await self._take_debug_screenshot("app_selection_failed", e)
             print(f"❌ Failed to select app: {e}")
             return False
     
@@ -314,6 +353,7 @@ class PlaywrightASOTask:
             return True            
                 
         except Exception as e:
+            await self._take_debug_screenshot("keyword_deletion_failed", e)
             print(f"❌ Failed to delete keywords: {e}")
             return False
     
@@ -339,6 +379,7 @@ class PlaywrightASOTask:
             return True
             
         except Exception as e:
+            await self._take_debug_screenshot("keyword_addition_failed", e)
             print(f"❌ Failed to add keywords: {e}")
             return False
     
@@ -354,6 +395,7 @@ class PlaywrightASOTask:
             try:
                 await self.page.wait_for_selector('table', timeout=keyword_timeout * 1000)
             except Exception as e:
+                await self._take_debug_screenshot("table_not_found", e)
                 print(f"❌ Table not found, checking if page is still available: {e}")
                 # Check if the page is still available before attempting reload
                 if not self.page or self.page.is_closed():
@@ -366,6 +408,7 @@ class PlaywrightASOTask:
                     await self.page.wait_for_selector('table', timeout=keyword_timeout * 1000)
                     print("✅ Page reloaded successfully, the table is available now")
                 except Exception as reload_e:
+                    await self._take_debug_screenshot("table_reload_failed", reload_e)
                     print(f"❌ Failed to reload page or find table: {reload_e}")
                     return {}
 
@@ -378,6 +421,7 @@ class PlaywrightASOTask:
                 await self.page.wait_for_selector('.p-paginator-rpp-options', timeout=keyword_timeout * 1000)
                 paginator = self.page.locator('.p-paginator-rpp-options').first
                 if not await paginator.is_visible():
+                    await self._take_debug_screenshot("paginator_not_visible", None)
                     print("❌ Paginator not found, cannot extract metrics")
                     return {}
                 await paginator.click()            
@@ -390,6 +434,7 @@ class PlaywrightASOTask:
                 
                 await self.page.wait_for_timeout(2000)
             except Exception as e:
+                await self._take_debug_screenshot("paginator_setup_failed", e)
                 print(f"❌ Failed to set paginator to 200 items, continue with default pagination: {e}")
             
             print("🔍 Extracting keyword metrics...")
@@ -400,6 +445,7 @@ class PlaywrightASOTask:
             row_count = await rows.count()
             
             if row_count < 2:
+                await self._take_debug_screenshot("no_data_rows", None)
                 print("❌ No data rows found in table")
                 return keyword_metrics
             
@@ -427,6 +473,7 @@ class PlaywrightASOTask:
             print(f"Column indices - Keyword: {keyword_idx}, Complexity: {complexity_idx}, Traffic: {traffic_idx}")
             
             if keyword_idx == -1 or complexity_idx == -1 or traffic_idx == -1:
+                await self._take_debug_screenshot("columns_not_found", None)
                 print("❌ Could not find required columns in header")
                 return keyword_metrics
             
@@ -469,6 +516,7 @@ class PlaywrightASOTask:
             return keyword_metrics
             
         except Exception as e:
+            await self._take_debug_screenshot("metrics_extraction_failed", e)
             print(f"❌ Failed to extract metrics: {e}")
             return {}
     
