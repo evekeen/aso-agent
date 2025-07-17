@@ -318,9 +318,11 @@ def display_intermediate_results(container, data: Dict[str, Any]) -> None:
             st.subheader("💰 Market Size Analysis")
             revenue_data = result_data.get("revenue_by_keyword", {})
             if revenue_data:
+                # Sort by revenue descending and show top 10
+                sorted_revenue = sorted(revenue_data.items(), key=lambda x: x[1], reverse=True)
                 df = pd.DataFrame([
                     {"Keyword": k, "Market Size ($)": f"${v:,.2f}"}
-                    for k, v in list(revenue_data.items())[:10]  # Show top 10
+                    for k, v in sorted_revenue[:10]  # Show top 10
                 ])
                 st.dataframe(df, use_container_width=True)
 
@@ -369,13 +371,15 @@ def display_overview_tab(app_ideas: Dict[str, Any], final_report: Dict[str, Any]
     overview_data = []
     for idea, analysis in app_ideas.items():
         keywords_data = analysis.get("keywords", {})
+        # Filter out weak keywords (0.0 difficulty) for display
+        viable_keywords = {k: v for k, v in keywords_data.items() if v.get('difficulty_rating', 0) > 0.0}
         overview_data.append({
             "App Idea": idea.title(),
             "Market Size ($)": f"${analysis.get('best_possible_market_size_usd', 0):,.2f}",
-            "Keywords Analyzed": len(keywords_data),
-            "Avg Difficulty": calculate_avg_difficulty(keywords_data),
-            "Avg Traffic": calculate_avg_traffic(keywords_data),
-            "Opportunity Score": calculate_opportunity_score_for_idea(keywords_data)
+            "Keywords Analyzed": len(viable_keywords),
+            "Best Difficulty": calculate_best_difficulty(viable_keywords),
+            "Best Traffic": calculate_best_traffic(viable_keywords),
+            "Opportunity Score": calculate_opportunity_score_for_idea(viable_keywords)
         })
     
     if overview_data:
@@ -406,21 +410,34 @@ def display_keywords_tab(app_ideas: Dict[str, Any]) -> None:
             st.warning(f"No keywords available for {selected_idea}")
             return
         
-        # Convert to DataFrame for better display
+        # Convert to DataFrame for better display, filtering out weak keywords (0.0 difficulty)
         keywords_data = []
         for keyword, data in keywords.items():
+            difficulty = data.get('difficulty_rating', 0)
+            # Skip weak keywords with 0.0 difficulty
+            if difficulty == 0.0:
+                continue
+            market_size = data.get('market_size_usd', 0)
             keywords_data.append({
                 "Keyword": keyword,
-                "Difficulty": data.get('difficulty_rating', 0),
+                "Difficulty": difficulty,
                 "Traffic": data.get('traffic_rating', 0),
-                "Market Size ($)": f"${data.get('market_size_usd', 0):,.2f}",
+                "Market Size ($)": f"${market_size:,.2f}",
+                "Market Size (Raw)": market_size,  # For sorting
                 "Opportunity Score": calculate_opportunity_score(data)
             })
         
+        if not keywords_data:
+            st.warning(f"No viable keywords found for {selected_idea} (all keywords had 0.0 difficulty)")
+            return
+        
         df = pd.DataFrame(keywords_data)
         
-        # Sort by opportunity score
-        df = df.sort_values("Opportunity Score", ascending=False)
+        # Sort by traffic descending as primary, then by market size descending as secondary
+        df = df.sort_values(["Traffic", "Market Size (Raw)"], ascending=[False, False])
+        
+        # Remove the raw market size column for display
+        df = df.drop("Market Size (Raw)", axis=1)
         
         st.dataframe(df, use_container_width=True)
         
@@ -439,15 +456,19 @@ def display_charts_tab(app_ideas: Dict[str, Any]) -> None:
     """Display charts and visualizations."""
     st.subheader("Analysis Charts")
     
-    # Prepare data for charts
+    # Prepare data for charts, filtering out weak keywords (0.0 difficulty)
     all_keywords = []
     for idea, analysis in app_ideas.items():
         keywords = analysis.get("keywords", {})
         for keyword, data in keywords.items():
+            difficulty = data.get('difficulty_rating', 0)
+            # Skip weak keywords with 0.0 difficulty
+            if difficulty == 0.0:
+                continue
             all_keywords.append({
                 "App Idea": idea.title(),
                 "Keyword": keyword,
-                "Difficulty": data.get('difficulty_rating', 0),
+                "Difficulty": difficulty,
                 "Traffic": data.get('traffic_rating', 0),
                 "Market Size": data.get('market_size_usd', 0)
             })
@@ -540,6 +561,22 @@ def calculate_avg_traffic(keywords: Dict[str, Any]) -> float:
         return 0.0
     traffic_scores = [data.get('traffic_rating', 0) for data in keywords.values()]
     return round(sum(traffic_scores) / len(traffic_scores), 1)
+
+
+def calculate_best_difficulty(keywords: Dict[str, Any]) -> float:
+    """Calculate best (lowest) difficulty score."""
+    if not keywords:
+        return 0.0
+    difficulties = [data.get('difficulty_rating', 0) for data in keywords.values()]
+    return round(min(difficulties), 1)
+
+
+def calculate_best_traffic(keywords: Dict[str, Any]) -> float:
+    """Calculate best (highest) traffic score."""
+    if not keywords:
+        return 0.0
+    traffic_scores = [data.get('traffic_rating', 0) for data in keywords.values()]
+    return round(max(traffic_scores), 1)
 
 
 def calculate_opportunity_score(keyword_data: Dict[str, Any]) -> float:
