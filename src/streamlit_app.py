@@ -328,7 +328,7 @@ def display_intermediate_results(container, data: Dict[str, Any]) -> None:
 
 
 def display_aso_results(final_report: Dict[str, Any], market_threshold: int = 50000) -> None:
-    """Display comprehensive ASO analysis results."""
+    """Display comprehensive ASO analysis results from agent-computed report."""
     st.subheader("📊 ASO Analysis Results")
     
     app_ideas = final_report.get("app_ideas", {})
@@ -340,14 +340,16 @@ def display_aso_results(final_report: Dict[str, Any], market_threshold: int = 50
     tab1, tab2 = st.tabs(["📈 Overview", "🎯 Keywords"])
     
     with tab1:
-        display_overview_tab(app_ideas, final_report, market_threshold)
+        display_overview_tab_computed(app_ideas, final_report)
     
     with tab2:
-        display_keywords_tab(app_ideas, market_threshold)
+        display_keywords_tab_computed(app_ideas)
 
 
-def display_overview_tab(app_ideas: Dict[str, Any], final_report: Dict[str, Any], market_threshold: int) -> None:
-    """Display overview of all app ideas."""
+
+
+def display_overview_tab_computed(app_ideas: Dict[str, Any], final_report: Dict[str, Any]) -> None:
+    """Display overview of all app ideas using agent-computed data."""
     st.subheader("App Ideas Overview")
     
     # Summary metrics
@@ -361,31 +363,9 @@ def display_overview_tab(app_ideas: Dict[str, Any], final_report: Dict[str, Any]
     with col3:
         st.metric("Difficulty Analyses", metadata.get("difficulty_analyses_completed", 0))
     
-    # App ideas with best performing keywords
+    # App ideas with pre-computed analysis
     for idea, analysis in app_ideas.items():
-        keywords_data = analysis.get("keywords", {})
-        # Filter out weak keywords and find best performing ones
-        viable_keywords = {k: v for k, v in keywords_data.items() if v.get('difficulty_rating', 0) > 0.0}
-        
-        # Find best performing keywords based on market threshold and difficulty
-        best_keywords = []
-        for keyword, data in viable_keywords.items():
-            difficulty = data.get('difficulty_rating', 0)
-            traffic = data.get('traffic_rating', 0)
-            market_size = data.get('market_size_usd', 0)
-            
-            # Filter by criteria: market size meets threshold, good traffic, reasonable difficulty
-            if market_size >= market_threshold and traffic >= 200 and difficulty < 3.0:
-                best_keywords.append({
-                    'keyword': keyword,
-                    'difficulty': difficulty,
-                    'traffic': traffic,
-                    'market_size': market_size,
-                    'opportunity_score': traffic / max(difficulty, 1)  # Higher is better
-                })
-        
-        # Sort by opportunity score (traffic/difficulty ratio) descending
-        best_keywords.sort(key=lambda x: x['opportunity_score'], reverse=True)
+        summary = analysis.get("summary", {})
         
         # Display app idea section
         st.subheader(f"🎯 {idea.title()}")
@@ -394,32 +374,33 @@ def display_overview_tab(app_ideas: Dict[str, Any], final_report: Dict[str, Any]
         with col1:
             st.metric("Best Market Size", f"${analysis.get('best_possible_market_size_usd', 0):,.0f}")
         with col2:
-            st.metric("Total Keywords", len(keywords_data))
+            st.metric("Total Keywords", summary.get("total_keywords", 0))
         with col3:
-            st.metric("Viable Keywords", len(viable_keywords))
+            st.metric("Viable Keywords", summary.get("viable_keywords", 0))
         
-        # Show top 3 best performing keywords
-        if best_keywords:
+        # Show top performing keywords (pre-computed by agent)
+        top_performers = summary.get("top_performers", [])
+        if top_performers:
             st.write("**🏆 Top Performing Keywords:**")
-            for i, kw in enumerate(best_keywords[:3], 1):
-                with st.expander(f"#{i} {kw['keyword']}", expanded=True):
+            for i, performer in enumerate(top_performers, 1):
+                with st.expander(f"#{i} {performer['keyword']}", expanded=True):
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        st.metric("Difficulty", f"{kw['difficulty']:.1f}/10")
+                        st.metric("Difficulty", f"{performer['difficulty']:.1f}/10")
                     with col2:
-                        st.metric("Traffic", f"{kw['traffic']:.0f}/100")
+                        st.metric("Traffic", f"{performer['traffic']:.0f}/100")
                     with col3:
-                        st.metric("Market Size", f"${kw['market_size']:,.0f}")
+                        st.metric("Market Size", f"${performer['market_size']:,.0f}")
                     with col4:
-                        st.metric("Opportunity Score", f"{kw['opportunity_score']:.1f}")
+                        st.metric("Opportunity Score", f"{performer['opportunity_score']:.1f}")
         else:
-            st.warning(f"No keywords meet the criteria (Market Size ≥ ${market_threshold:,}, Traffic ≥ 200, Difficulty < 3.0)")
+            st.warning("No keywords meet the performance criteria")
         
         st.divider()
 
 
-def display_keywords_tab(app_ideas: Dict[str, Any], market_threshold: int) -> None:
-    """Display detailed keyword analysis."""
+def display_keywords_tab_computed(app_ideas: Dict[str, Any]) -> None:
+    """Display detailed keyword analysis using agent-computed data."""
     st.subheader("Keyword Analysis")
     
     # App idea selector
@@ -435,43 +416,40 @@ def display_keywords_tab(app_ideas: Dict[str, Any], market_threshold: int) -> No
     )
     
     if selected_idea:
-        keywords = app_ideas[selected_idea].get('keywords', {})
+        analysis = app_ideas[selected_idea]
+        keywords = analysis.get('keywords', {})
         
         if not keywords:
             st.warning(f"No keywords available for {selected_idea}")
             return
         
-        # Convert to DataFrame for detailed analysis - show ALL keywords analyzed
+        # Helper function to get emoji and text from category
+        def get_status_display(category):
+            status_map = {
+                "weak": ("❌", "Weak"),
+                "top_performer": ("🏆", "Top Performer"),
+                "good": ("✅", "Good"),
+                "low_market": ("💸", "Low Market"),
+                "too_difficult": ("🔴", "Too Difficult"),
+                "low_traffic": ("📉", "Low Traffic"),
+                "low_potential": ("⚠️", "Low Potential")
+            }
+            return status_map.get(category, ("❓", "Unknown"))
+        
+        # Convert agent-computed data to DataFrame
         keywords_data = []
         for keyword, data in keywords.items():
-            difficulty = data.get('difficulty_rating', 0)
-            traffic = data.get('traffic_rating', 0)
-            market_size = data.get('market_size_usd', 0)
-            
-            # Show status for each keyword based on market threshold and difficulty (0-10 scale)
-            if difficulty == 0.0:
-                status = "❌ Weak"
-            elif market_size >= market_threshold and traffic >= 200 and difficulty < 3.0:
-                status = "🏆 Top Performer"
-            elif market_size >= market_threshold and traffic >= 100 and difficulty < 4.0:
-                status = "✅ Good"
-            elif market_size < market_threshold:
-                status = "💸 Low Market"
-            elif difficulty >= 4.0:
-                status = "🔴 Too Difficult"
-            elif traffic < 100:
-                status = "📉 Low Traffic"
-            else:
-                status = "⚠️ Low Potential"
+            category = data.get('category', 'unknown')
+            emoji, text = get_status_display(category)
             
             keywords_data.append({
                 "Keyword": keyword,
-                "Status": status,
-                "Difficulty": difficulty,
-                "Traffic": traffic,
-                "Market Size ($)": f"${market_size:,.2f}",
-                "Market Size (Raw)": market_size,  # For sorting
-                "Opportunity Score": calculate_opportunity_score(data) if difficulty > 0 else 0
+                "Status": f"{emoji} {text}",
+                "Difficulty": data.get('difficulty_rating', 0),
+                "Traffic": data.get('traffic_rating', 0),
+                "Market Size ($)": f"${data.get('market_size_usd', 0):,.2f}",
+                "Market Size (Raw)": data.get('market_size_usd', 0),  # For sorting
+                "Opportunity Score": data.get('opportunity_score', 0)
             })
         
         if not keywords_data:
@@ -500,57 +478,8 @@ def display_keywords_tab(app_ideas: Dict[str, Any], market_threshold: int) -> No
 
 
 
-def calculate_avg_difficulty(keywords: Dict[str, Any]) -> float:
-    """Calculate average difficulty score."""
-    if not keywords:
-        return 0.0
-    difficulties = [data.get('difficulty_rating', 0) for data in keywords.values()]
-    return round(sum(difficulties) / len(difficulties), 1)
 
 
-def calculate_avg_traffic(keywords: Dict[str, Any]) -> float:
-    """Calculate average traffic score."""
-    if not keywords:
-        return 0.0
-    traffic_scores = [data.get('traffic_rating', 0) for data in keywords.values()]
-    return round(sum(traffic_scores) / len(traffic_scores), 1)
-
-
-def calculate_best_difficulty(keywords: Dict[str, Any]) -> float:
-    """Calculate best (lowest) difficulty score."""
-    if not keywords:
-        return 0.0
-    difficulties = [data.get('difficulty_rating', 0) for data in keywords.values()]
-    return round(min(difficulties), 1)
-
-
-def calculate_best_traffic(keywords: Dict[str, Any]) -> float:
-    """Calculate best (highest) traffic score."""
-    if not keywords:
-        return 0.0
-    traffic_scores = [data.get('traffic_rating', 0) for data in keywords.values()]
-    return round(max(traffic_scores), 1)
-
-
-def calculate_opportunity_score(keyword_data: Dict[str, Any]) -> float:
-    """Calculate opportunity score based on traffic/difficulty ratio."""
-    difficulty = keyword_data.get('difficulty_rating', 1)
-    traffic = keyword_data.get('traffic_rating', 0)
-    
-    if difficulty == 0:
-        return 0.0
-    
-    # Higher traffic, lower difficulty = better opportunity
-    return round((traffic / difficulty) * 10, 2)
-
-
-def calculate_opportunity_score_for_idea(keywords: Dict[str, Any]) -> float:
-    """Calculate overall opportunity score for an app idea."""
-    if not keywords:
-        return 0.0
-    
-    scores = [calculate_opportunity_score(data) for data in keywords.values()]
-    return round(sum(scores) / len(scores), 2)
 
 
 if __name__ == "__main__":

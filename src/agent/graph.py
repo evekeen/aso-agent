@@ -564,11 +564,10 @@ async def analyze_keyword_difficulty(state: dict) -> dict:
 @with_progress_tracking("generate_final_report", "Generating comprehensive ASO analysis report")
 async def generate_final_report(state: dict) -> dict:
     """
-    Generate ASO analysis report structured for agent consumption.
+    Generate comprehensive ASO analysis report with computed analysis for direct display.
     
-    Report format for each app idea:
-    1. Best possible market size
-    2. Dictionary of all keywords with difficulty, traffic, and market size ratings
+    This now includes all the analysis logic previously done in the Streamlit client,
+    making the client a thin presentation layer.
     """
     ideas = state.get("ideas", [])
     revenue_by_keyword = state.get("revenue_by_keyword", {})
@@ -576,8 +575,37 @@ async def generate_final_report(state: dict) -> dict:
     traffic_by_keyword = state.get("traffic_by_keyword", {})
     initial_keywords = state.get("initial_keywords", {})
     
-    print(f"\n📊 Generating Final ASO Analysis Report for Agent Consumption...")
+    print(f"\n📊 Generating Final ASO Analysis Report with Computed Analysis...")
     update_node_progress(20.0, f"Generating structured report for {len(ideas)} app ideas")
+    
+    # Helper function to calculate opportunity score
+    def calculate_opportunity_score(keyword_data):
+        difficulty = keyword_data.get('difficulty_rating', 1)
+        traffic = keyword_data.get('traffic_rating', 0)
+        if difficulty == 0:
+            return 0.0
+        return round((traffic / difficulty) * 10, 2)
+    
+    # Helper function to categorize keywords
+    def categorize_keyword(keyword_data, market_threshold=50000):
+        difficulty = keyword_data.get('difficulty_rating', 0)
+        traffic = keyword_data.get('traffic_rating', 0)
+        market_size = keyword_data.get('market_size_usd', 0)
+        
+        if difficulty == 0.0:
+            return "weak"
+        elif market_size >= market_threshold and traffic >= 200 and difficulty < 3.0:
+            return "top_performer"
+        elif market_size >= market_threshold and traffic >= 100 and difficulty < 4.0:
+            return "good"
+        elif market_size < market_threshold:
+            return "low_market"
+        elif difficulty >= 4.0:
+            return "too_difficult"
+        elif traffic < 100:
+            return "low_traffic"
+        else:
+            return "low_potential"
     
     # Generate structured report for each app idea
     app_analysis = {}
@@ -589,7 +617,17 @@ async def generate_final_report(state: dict) -> dict:
         if not idea_keywords:
             app_analysis[idea] = {
                 "best_possible_market_size_usd": 0,
-                "keywords": {}
+                "keywords": {},
+                "summary": {
+                    "total_keywords": 0,
+                    "viable_keywords": 0,
+                    "top_performers": [],
+                    "avg_difficulty": 0.0,
+                    "avg_traffic": 0.0,
+                    "best_difficulty": 0.0,
+                    "best_traffic": 0.0,
+                    "opportunity_score": 0.0
+                }
             }
             continue
         
@@ -600,25 +638,82 @@ async def generate_final_report(state: dict) -> dict:
         ]
         best_possible_market_size = max(keyword_market_sizes) if keyword_market_sizes else 0
         
-        # Build keyword dictionary with all metrics
+        # Build keyword dictionary with all metrics and computed analysis
         keywords_data = {}
+        viable_keywords = []
+        top_performers = []
+        
         for keyword in idea_keywords:
             market_size = revenue_by_keyword.get(keyword, 0)
             difficulty_score = difficulty_by_keyword.get(keyword, 0.0)
             traffic_score = traffic_by_keyword.get(keyword, 0.0)
             
-            keywords_data[keyword] = {
+            keyword_data = {
                 "difficulty_rating": round(difficulty_score, 2),
                 "traffic_rating": traffic_score,
-                "market_size_usd": market_size
+                "market_size_usd": market_size,
+                "opportunity_score": 0.0,
+                "category": "weak"
             }
+            
+            # Calculate opportunity score
+            keyword_data["opportunity_score"] = calculate_opportunity_score(keyword_data)
+            
+            # Categorize keyword
+            category = categorize_keyword(keyword_data)
+            keyword_data["category"] = category
+            
+            # Add to top performers if applicable
+            if category == "top_performer":
+                top_performers.append({
+                    'keyword': keyword,
+                    'difficulty': difficulty_score,
+                    'traffic': traffic_score,
+                    'market_size': market_size,
+                    'opportunity_score': keyword_data["opportunity_score"]
+                })
+            
+            keywords_data[keyword] = keyword_data
+            
+            # Track viable keywords (non-weak)
+            if difficulty_score > 0.0:
+                viable_keywords.append(keyword_data)
+        
+        # Sort top performers by opportunity score
+        top_performers.sort(key=lambda x: x['opportunity_score'], reverse=True)
+        
+        # Calculate summary statistics
+        if viable_keywords:
+            difficulties = [k['difficulty_rating'] for k in viable_keywords]
+            traffics = [k['traffic_rating'] for k in viable_keywords]
+            
+            avg_difficulty = round(sum(difficulties) / len(difficulties), 1)
+            avg_traffic = round(sum(traffics) / len(traffics), 1)
+            best_difficulty = round(min(difficulties), 1)
+            best_traffic = round(max(traffics), 1)
+            
+            # Calculate overall opportunity score
+            opportunity_scores = [k['opportunity_score'] for k in viable_keywords]
+            avg_opportunity = round(sum(opportunity_scores) / len(opportunity_scores), 2)
+        else:
+            avg_difficulty = avg_traffic = best_difficulty = best_traffic = avg_opportunity = 0.0
         
         app_analysis[idea] = {
             "best_possible_market_size_usd": best_possible_market_size,
-            "keywords": keywords_data
+            "keywords": keywords_data,
+            "summary": {
+                "total_keywords": len(idea_keywords),
+                "viable_keywords": len(viable_keywords),
+                "top_performers": top_performers[:3],  # Top 3 performers
+                "avg_difficulty": avg_difficulty,
+                "avg_traffic": avg_traffic,
+                "best_difficulty": best_difficulty,
+                "best_traffic": best_traffic,
+                "opportunity_score": avg_opportunity
+            }
         }
     
-    # Calculate overall statistics for logging
+    # Calculate overall statistics
     total_keywords_analyzed = len(revenue_by_keyword)
     total_market_size = sum(revenue_by_keyword.values())
     difficulty_analyses_completed = len(difficulty_by_keyword)
@@ -627,7 +722,7 @@ async def generate_final_report(state: dict) -> dict:
     store = get_aso_store()
     store_stats = await store.get_stats()
     
-    # Structure final report for agent consumption
+    # Structure final report for direct consumption
     final_report = {
         "timestamp": datetime.now().isoformat(),
         "analysis_metadata": {
@@ -640,11 +735,12 @@ async def generate_final_report(state: dict) -> dict:
                 "namespaces": store_stats.get('namespaces', 0)
             }
         },
-        "app_ideas": app_analysis
+        "app_ideas": app_analysis,
+        "display_ready": True  # Flag indicating this report is ready for direct display
     }
     
     # Print summary for monitoring
-    print(f"✅ Agent-Ready Report Generated!")
+    print(f"✅ Comprehensive Analysis Report Generated!")
     print(f"  • App ideas analyzed: {len(ideas)}")
     print(f"  • Keywords evaluated: {total_keywords_analyzed}")
     print(f"  • Difficulty analyses: {difficulty_analyses_completed}")
@@ -653,24 +749,18 @@ async def generate_final_report(state: dict) -> dict:
     
     # Print structured data for each app idea
     for idea, analysis in app_analysis.items():
-        keywords_count = len(analysis['keywords'])
-        best_market = analysis['best_possible_market_size_usd']
+        summary = analysis['summary']
         
         print(f"\n🎯 {idea.title()}:")
-        print(f"  • Best possible market size: ${best_market:,.2f}")
-        print(f"  • Total keywords: {keywords_count}")
+        print(f"  • Best possible market size: ${analysis['best_possible_market_size_usd']:,.2f}")
+        print(f"  • Total keywords: {summary['total_keywords']}")
+        print(f"  • Viable keywords: {summary['viable_keywords']}")
+        print(f"  • Top performers: {len(summary['top_performers'])}")
         
-        if keywords_count > 0:
-            # Show top 3 keywords by market size
-            top_keywords = sorted(
-                analysis['keywords'].items(), 
-                key=lambda x: x[1]['market_size_usd'], 
-                reverse=True
-            )[:3]
-            
-            print(f"  • Top keywords by market size:")
-            for keyword, data in top_keywords:
-                print(f"    - '{keyword}': ${data['market_size_usd']:,.0f} (difficulty: {data['difficulty_rating']})")
+        if summary['top_performers']:
+            print(f"  • Best opportunities:")
+            for performer in summary['top_performers']:
+                print(f"    - '{performer['keyword']}': ${performer['market_size']:,.0f} (difficulty: {performer['difficulty']:.1f}, opportunity: {performer['opportunity_score']:.1f})")
     
     return {"final_report": final_report}
 
