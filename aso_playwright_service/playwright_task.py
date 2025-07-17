@@ -14,6 +14,7 @@ goto_timeout = 60
 action_timeout = 60
 connect_timeout = 60
 keyword_timeout = 60
+paginator_timeout = 10
 
 
 @dataclass
@@ -66,8 +67,6 @@ class PlaywrightASOTask:
             await self.page.screenshot(path=screenshot_path, full_page=True)
             
             print(f"📸 Debug screenshot saved: {screenshot_path}")
-            if error:
-                print(f"   Error context: {error}")
             
             return str(screenshot_path)
         except Exception as screenshot_error:
@@ -340,6 +339,12 @@ class PlaywrightASOTask:
                 print("ℹ️ No keywords to delete")
                 return True
             print("🔍 Deleting all existing keywords...")
+            
+            select_all_btn = self.page.locator('p-tableheadercheckbox .p-checkbox-box').first
+            await select_all_btn.click()
+            all_keywords_option = self.page.locator('.table-header-rows-select_dropdown :has-text("All keywords")').first
+            await all_keywords_option.click()
+            await self.page.wait_for_timeout(1000)
                 
             delete_all_btn = self.page.locator('button.aso-action-icon--trash').first
             await delete_all_btn.click()
@@ -397,11 +402,6 @@ class PlaywrightASOTask:
             except Exception as e:
                 await self._take_debug_screenshot("table_not_found", e)
                 print(f"❌ Table not found, checking if page is still available: {e}")
-                # Check if the page is still available before attempting reload
-                if not self.page or self.page.is_closed():
-                    print("❌ Page is closed, cannot reload")
-                    return {}
-                
                 try:
                     print("🔄 Reloading page to ensure table is available...")
                     await self.page.reload()
@@ -415,21 +415,15 @@ class PlaywrightASOTask:
             # Check if page is still available before continuing
             if not self.page or self.page.is_closed():
                 print("❌ Page is closed, cannot continue extraction")
-                return {}
-            
-            try:
-                await self.page.locator('.app-show-graph-switch input').click()
-            except Exception as e:
-                await self._take_debug_screenshot("graph_switch_failed", e)
-                print(f"❌ Failed to turn off graph toggle: {e}")
+                return {}            
                 
             #scroll page to the bottmom to ensure all data is loaded
             print("🔍 Scrolling to bottom to load all data...")
             await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await asyncio.sleep(2)
+            await self.page.wait_for_timeout(1000)
             
             try: 
-                await self.page.wait_for_selector('.p-paginator-rpp-options', timeout=keyword_timeout * 1000)
+                await self.page.wait_for_selector('.p-paginator-rpp-options', timeout=paginator_timeout * 1000)
                 paginator = self.page.locator('.p-paginator-rpp-options').first
                 if not await paginator.is_visible():
                     await self._take_debug_screenshot("paginator_not_visible", None)
@@ -439,7 +433,7 @@ class PlaywrightASOTask:
                 await self.page.wait_for_timeout(2000)
             
                 option_200_selector = '.p-dropdown-items-wrapper .p-dropdown-item:has-text("200")'
-                await self.page.wait_for_selector(option_200_selector, timeout=keyword_timeout * 1000)            
+                await self.page.wait_for_selector(option_200_selector, timeout=paginator_timeout * 1000)            
                 option_200 = self.page.locator(option_200_selector)
                 await option_200.click()            
                 
@@ -585,7 +579,6 @@ class PlaywrightASOTask:
             
             # Delete existing keywords
             await self._delete_all_keywords()
-            await self._delete_all_keywords()  # Double cleanup for safety
             
             # Add new keywords
             await self._add_keywords(keywords)
